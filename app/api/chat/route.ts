@@ -46,7 +46,10 @@ export async function POST(req: NextRequest) {
     const catalogText =
       products.length > 0
         ? products
-            .map((p: { name: string; price: number; description?: string }) => `- ${p.name}: ${p.price} ₸${p.description ? ` (${p.description})` : ""}`)
+            .map(
+              (p: { name: string; price: number; description?: string }) =>
+                `- ${p.name}: ${p.price} ₸${p.description ? ` (${p.description})` : ""}`
+            )
             .join("\n")
         : "Каталог пока пуст.";
 
@@ -59,6 +62,7 @@ export async function POST(req: NextRequest) {
 
 Информация о компании:
 - Название: ${biz.name}
+- Город: ${biz.city || "Казахстан"}
 - Описание: ${biz.services_description || biz.tagline || "—"}
 - Адрес: ${biz.address || "—"}
 - График работы: ${biz.working_hours || "—"}
@@ -90,7 +94,6 @@ ${catalogText}
       }
     }
 
-    // Демо-ответ без ключа GEMINI_API_KEY
     const lower = message.toLowerCase();
     if (
       lower.includes("меню") ||
@@ -112,7 +115,7 @@ ${catalogText}
 
     if (lower.includes("адрес") || lower.includes("график") || lower.includes("контакт")) {
       return NextResponse.json({
-        reply: `Мы находимся по адресу: ${biz.address || "уточняйте у менеджера"}. График работы: ${biz.working_hours || "ежедневно"}. Телефон: ${biz.phone || biz.whatsapp || "указан на витрине"}.`,
+        reply: `Мы находимся: ${[biz.city, biz.address].filter(Boolean).join(", ") || "уточняйте у менеджера"}. График работы: ${biz.working_hours || "ежедневно"}. Телефон: ${biz.phone || biz.whatsapp || "указан на витрине"}.`,
       });
     }
 

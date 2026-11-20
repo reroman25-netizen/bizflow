@@ -1,9 +1,4 @@
--- =========================================================
--- BizFlow KZ — Схема базы данных и прав доступа (RLS)
--- Вставьте целиком в Supabase -> SQL Editor и нажмите Run
--- =========================================================
-
--- 1. Профили пользователей (роли: client, business, admin)
+-- Полная схема TIYIN Space (для нового проекта Supabase)
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
@@ -12,12 +7,12 @@ create table if not exists public.profiles (
   created_at timestamptz default now()
 );
 
--- 2. Бизнесы (один владелец -> одна платформа бизнеса)
 create table if not exists public.businesses (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid references auth.users(id) on delete cascade not null unique,
   slug text unique not null,
   name text not null,
+  city text default 'Алматы',
   tagline text default '',
   services_description text default '',
   address text default '',
@@ -29,7 +24,6 @@ create table if not exists public.businesses (
   created_at timestamptz default now()
 );
 
--- 3. Скрытые настройки ИИ-агента (доступны ТОЛЬКО супер-админу и серверу)
 create table if not exists public.business_ai_configs (
   business_id uuid primary key references public.businesses(id) on delete cascade,
   ai_enabled boolean default true,
@@ -38,7 +32,6 @@ create table if not exists public.business_ai_configs (
   updated_at timestamptz default now()
 );
 
--- Автоматически создавать запись ИИ-конфига при создании нового бизнеса
 create or replace function public.handle_new_business_ai()
 returns trigger
 language plpgsql
@@ -62,7 +55,6 @@ create trigger on_business_created_ai
   after insert on public.businesses
   for each row execute procedure public.handle_new_business_ai();
 
--- 4. Каталог товаров и услуг
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   business_id uuid references public.businesses(id) on delete cascade not null,
@@ -74,7 +66,6 @@ create table if not exists public.products (
   created_at timestamptz default now()
 );
 
--- 5. База клиентов бизнеса
 create table if not exists public.clients (
   id uuid primary key default gen_random_uuid(),
   business_id uuid references public.businesses(id) on delete cascade not null,
@@ -87,7 +78,6 @@ create table if not exists public.clients (
   unique (business_id, phone)
 );
 
--- 6. Заказы и заявки
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
   order_code text not null,
@@ -104,9 +94,6 @@ create table if not exists public.orders (
   created_at timestamptz default now()
 );
 
--- =========================================================
--- Включаем Row Level Security (RLS)
--- =========================================================
 alter table public.profiles enable row level security;
 alter table public.businesses enable row level security;
 alter table public.business_ai_configs enable row level security;
@@ -114,100 +101,13 @@ alter table public.products enable row level security;
 alter table public.clients enable row level security;
 alter table public.orders enable row level security;
 
--- PROFILES: пользователь видит и создает только свой профиль (роль admin через клиент запрещена)
-drop policy if exists "Users read own profile" on public.profiles;
-create policy "Users read own profile"
-  on public.profiles for select
-  using (auth.uid() = id);
-
-drop policy if exists "Users insert own profile" on public.profiles;
-create policy "Users insert own profile"
-  on public.profiles for insert
-  with check (auth.uid() = id and role in ('client', 'business'));
-
-drop policy if exists "Users update own profile" on public.profiles;
-create policy "Users update own profile"
-  on public.profiles for update
-  using (auth.uid() = id)
-  with check (auth.uid() = id and role in ('client', 'business'));
-
--- BUSINESSES: активные витрины видны всем в поиске; менять может ТОЛЬКО владелец
-drop policy if exists "Public read active businesses" on public.businesses;
-create policy "Public read active businesses"
-  on public.businesses for select
-  using (is_active = true or auth.uid() = owner_id);
-
-drop policy if exists "Owner insert business" on public.businesses;
-create policy "Owner insert business"
-  on public.businesses for insert
-  with check (auth.uid() = owner_id);
-
-drop policy if exists "Owner update business" on public.businesses;
-create policy "Owner update business"
-  on public.businesses for update
-  using (auth.uid() = owner_id)
-  with check (auth.uid() = owner_id);
-
--- BUSINESS_AI_CONFIGS: НЕТ политик для обычных пользователей и владельцев бизнеса!
--- Таблица полностью закрыта — доступ к ней имеет только сервер (service_role) и /admin.
-
--- PRODUCTS: публично видны доступные товары; управлять может только владелец бизнеса
-drop policy if exists "Public read available products" on public.products;
-create policy "Public read available products"
-  on public.products for select
-  using (
-    is_available = true
-    or exists (
-      select 1 from public.businesses b
-      where b.id = products.business_id and b.owner_id = auth.uid()
-    )
-  );
-
-drop policy if exists "Owner manage products" on public.products;
-create policy "Owner manage products"
-  on public.products for all
-  using (
-    exists (
-      select 1 from public.businesses b
-      where b.id = products.business_id and b.owner_id = auth.uid()
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.businesses b
-      where b.id = products.business_id and b.owner_id = auth.uid()
-    )
-  );
-
--- CLIENTS: видит только владелец своего бизнеса (создание идет через сервер /api/orders)
-drop policy if exists "Owner read clients" on public.clients;
-create policy "Owner read clients"
-  on public.clients for select
-  using (
-    exists (
-      select 1 from public.businesses b
-      where b.id = clients.business_id and b.owner_id = auth.uid()
-    )
-  );
-
--- ORDERS: владелец видит и обновляет статусы своих заказов; авторизованный клиент видит свои заказы
-drop policy if exists "Owner read orders" on public.orders;
-create policy "Owner read orders"
-  on public.orders for select
-  using (
-    exists (
-      select 1 from public.businesses b
-      where b.id = orders.business_id and b.owner_id = auth.uid()
-    )
-    or auth.uid() = user_id
-  );
-
-drop policy if exists "Owner update order status" on public.orders;
-create policy "Owner update order status"
-  on public.orders for update
-  using (
-    exists (
-      select 1 from public.businesses b
-      where b.id = orders.business_id and b.owner_id = auth.uid()
-    )
-  );
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update on public.profiles to authenticated;
+grant select on public.businesses to anon;
+grant select, insert, update on public.businesses to authenticated;
+grant select on public.products to anon;
+grant select, insert, update, delete on public.products to authenticated;
+grant select on public.clients to authenticated;
+grant select, update on public.orders to authenticated;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;

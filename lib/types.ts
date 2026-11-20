@@ -12,6 +12,7 @@ export interface Business {
   owner_id: string;
   slug: string;
   name: string;
+  city: string;
   tagline: string;
   services_description: string;
   address: string;

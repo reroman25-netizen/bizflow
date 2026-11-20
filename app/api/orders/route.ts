@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
 
     const admin = getSupabaseAdmin();
 
-    // Подтягиваем реальные цены из базы (защита от подмены цены на клиенте)
     const productIds = items.map((i: { productId: string }) => i.productId);
     const { data: dbProducts } = await admin
       .from("products")
@@ -23,7 +22,10 @@ export async function POST(req: NextRequest) {
       .in("id", productIds);
 
     const productMap = new Map(
-      (dbProducts || []).map((p: { id: string; name: string; price: number }) => [p.id, { name: p.name, price: p.price }])
+      (dbProducts || []).map((p: { id: string; name: string; price: number }) => [
+        p.id,
+        { name: p.name, price: p.price },
+      ])
     );
 
     const verifiedItems = items
@@ -47,7 +49,6 @@ export async function POST(req: NextRequest) {
     const totalPrice = verifiedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const orderCode = "ORD-" + Math.floor(1000 + Math.random() * 9000);
 
-    // Обновляем или создаем клиента в базе бизнеса
     const normalizedPhone = String(clientPhone).trim();
     const { data: existingClient } = await admin
       .from("clients")

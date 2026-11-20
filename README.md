@@ -1,11 +1,6 @@
-# BizFlow KZ (v2 — Supabase Auth + Кабинет бизнеса + Витрины + Админка)
+# TIYIN Space — Прямой доступ к компаниям и сервисам
 
-## Настройка перед запуском
-1. Выполните `supabase/schema.sql` в Supabase → **SQL Editor**.
-2. В Supabase → **Authentication → Providers → Email** отключите **Confirm email** (чтобы бизнесы сразу попадали в кабинет после регистрации без настройки почтового сервера).
-3. В Vercel → **Settings → Environment Variables** добавьте:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `ADMIN_EMAIL` (ваша почта для входа в `/admin`)
-   - `GEMINI_API_KEY` (опционально, для живого ИИ-агента)
+Платформа для малого и среднего бизнеса Казахстана: личный кабинет ИП, изолированная онлайн-витрина по QR и ссылке, база клиентов и ИИ-агент 24/7.
+
+## Обновление базы данных (если база уже создана)
+Выполните в Supabase → **SQL Editor** файл `supabase/add_city.sql`, чтобы добавить колонку `city` к существующим компаниям без потери данных.

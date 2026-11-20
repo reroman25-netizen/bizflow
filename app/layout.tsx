@@ -5,9 +5,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin", "cyrillic"] });
 
 export const metadata: Metadata = {
-  title: "BizFlow KZ — Платформа для бизнеса и клиентов",
+  title: "TIYIN Space — Прямой доступ к компаниям и сервисам",
   description:
-    "Найдите нужную компанию, откройте каталог и общайтесь с ИИ-ассистентом. Бизнесам — личный кабинет, витрина по QR и база клиентов.",
+    "Найдите нужную компанию в вашем городе, откройте каталог и общайтесь с ИИ-ассистентом. Бизнесам — личный кабинет, витрина по QR и база клиентов.",
 };
 
 export default function RootLayout({

@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
       admin.from("products").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const aiMap = new Map((aiRes.data || []).map((a: { business_id: string }) => [a.business_id, a]));
+    const aiMap = new Map(
+      (aiRes.data || []).map((a: { business_id: string }) => [a.business_id, a])
+    );
     const products = prodRes.data || [];
 
     const businesses = (bizRes.data || []).map((b: { id: string }) => ({

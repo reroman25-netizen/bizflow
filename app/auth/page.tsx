@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Building2, User, ArrowLeft, Mail, Lock } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import { BrandLogo } from "@/components/BrandLogo";
 
 function AuthForm() {
   const router = useRouter();
@@ -53,7 +54,7 @@ function AuthForm() {
 
         if (!data.session) {
           setInfoMsg(
-            "Аккаунт создан! Подтвердите почту по ссылке в письме (или отключите Confirm email в настройках Supabase), затем войдите."
+            "Аккаунт создан! Подтвердите почту по ссылке в письме, затем войдите."
           );
           setLoading(false);
           return;
@@ -63,7 +64,6 @@ function AuthForm() {
         return;
       }
 
-      // LOGIN
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -77,7 +77,6 @@ function AuthForm() {
 
       const user = data.user;
       if (user) {
-        // Проверяем, является ли пользователь супер-админом
         const checkRes = await fetch("/api/admin/check", {
           headers: { Authorization: `Bearer ${data.session.access_token}` },
         });
@@ -119,25 +118,29 @@ function AuthForm() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-10">
+    <div className="min-h-screen bg-[#FAFAFB] flex flex-col justify-center items-center px-4 py-10">
       <div className="w-full max-w-md">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 mb-6"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Вернуться к поиску
-        </Link>
+        <div className="flex items-center justify-between mb-6">
+          <Link href="/">
+            <BrandLogo size="sm" />
+          </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-slate-500 hover:text-neutral-900"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            К поиску
+          </Link>
+        </div>
 
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8">
-          {/* Role Selector */}
           <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl mb-6">
             <button
               type="button"
               onClick={() => setRoleMode("business")}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition ${
                 roleMode === "business"
-                  ? "bg-white text-slate-900 shadow-sm"
+                  ? "bg-white text-neutral-950 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -149,7 +152,7 @@ function AuthForm() {
               onClick={() => setRoleMode("client")}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition ${
                 roleMode === "client"
-                  ? "bg-white text-slate-900 shadow-sm"
+                  ? "bg-white text-neutral-950 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -158,12 +161,12 @@ function AuthForm() {
             </button>
           </div>
 
-          <h1 className="text-2xl font-bold text-slate-900 mb-1">
+          <h1 className="text-2xl font-bold text-neutral-950 mb-1">
             {authTab === "register"
               ? roleMode === "business"
                 ? "Создать платформу бизнеса"
                 : "Регистрация клиента"
-              : "Вход в аккаунт"}
+              : "Вход в TIYIN Space"}
           </h1>
           <p className="text-sm text-slate-500 mb-6">
             {roleMode === "business"
@@ -182,7 +185,7 @@ function AuthForm() {
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Например: Айгерим"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                   required
                 />
               </div>
@@ -199,7 +202,7 @@ function AuthForm() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@example.com"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                   required
                 />
               </div>
@@ -217,7 +220,7 @@ function AuthForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••"
                   minLength={6}
-                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                   required
                 />
               </div>
@@ -238,7 +241,7 @@ function AuthForm() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-sm transition"
+              className="w-full py-3.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white font-semibold text-sm transition"
             >
               {loading
                 ? "Подождите..."
@@ -258,7 +261,7 @@ function AuthForm() {
                     setAuthTab("login");
                     setErrorMsg("");
                   }}
-                  className="text-blue-600 font-semibold hover:underline"
+                  className="text-neutral-950 font-semibold hover:underline"
                 >
                   Войти
                 </button>
@@ -272,7 +275,7 @@ function AuthForm() {
                     setAuthTab("register");
                     setErrorMsg("");
                   }}
-                  className="text-blue-600 font-semibold hover:underline"
+                  className="text-neutral-950 font-semibold hover:underline"
                 >
                   Создать
                 </button>

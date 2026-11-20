@@ -18,6 +18,7 @@ import {
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, BusinessAiConfig, Product } from "@/lib/types";
 import { formatKZT } from "@/lib/format";
+import { KZ_CITIES } from "@/lib/cities";
 
 interface AdminBusinessBundle {
   business: Business;
@@ -34,7 +35,6 @@ export default function AdminPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
 
-  // Quick add product by admin
   const [prodName, setProdName] = useState("");
   const [prodPrice, setProdPrice] = useState("");
   const [prodCat, setProdCat] = useState("Услуги");
@@ -163,18 +163,14 @@ export default function AdminPage() {
 
   if (errorMsg) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center px-4 bg-[#FAFAFB]">
         <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-slate-200 text-center space-y-4">
           <Lock className="w-10 h-10 text-purple-600 mx-auto" />
-          <h1 className="text-xl font-bold text-slate-900">Нет прав доступа</h1>
+          <h1 className="text-xl font-bold text-neutral-950">Нет прав доступа</h1>
           <p className="text-sm text-slate-500">{errorMsg}</p>
-          <p className="text-xs text-slate-400">
-            Убедитесь, что ваша почта указана в переменной <code>ADMIN_EMAIL</code> в
-            настройках Vercel.
-          </p>
           <Link
             href="/"
-            className="inline-block px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium"
+            className="inline-block px-5 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-medium"
           >
             На главную
           </Link>
@@ -184,15 +180,15 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-slate-900 text-white px-4 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-[#FAFAFB]">
+      <header className="bg-neutral-950 text-white px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Shield className="w-5 h-5 text-purple-400" />
-          <span className="font-bold">Супер-админка BizFlow</span>
+          <span className="font-bold">Супер-админка TIYIN Space</span>
         </div>
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-slate-300 hover:text-white"
+          className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-neutral-300 hover:text-white"
         >
           <ArrowLeft className="w-4 h-4" />
           На сайт
@@ -200,7 +196,6 @@ export default function AdminPage() {
       </header>
 
       <div className="max-w-6xl mx-auto p-4 sm:p-6 grid md:grid-cols-12 gap-6">
-        {/* Left: List of all businesses */}
         <div className="md:col-span-4 space-y-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 px-1">
             Все компании ({bundles.length})
@@ -221,7 +216,7 @@ export default function AdminPage() {
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-slate-900 truncate">
+                  <span className="font-bold text-neutral-950 truncate">
                     {item.business.name}
                   </span>
                   <span
@@ -231,14 +226,14 @@ export default function AdminPage() {
                   />
                 </div>
                 <div className="text-xs text-slate-500 mt-1">
-                  /{item.business.slug} • Товаров: {item.products.length}
+                  {item.business.city || "Алматы"} • /{item.business.slug} • Товаров:{" "}
+                  {item.products.length}
                 </div>
               </button>
             ))
           )}
         </div>
 
-        {/* Right: Manage Selected Business */}
         <div className="md:col-span-8 space-y-6">
           {notice && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-xl">
@@ -248,10 +243,9 @@ export default function AdminPage() {
 
           {current ? (
             <>
-              {/* Business Profile & Storefront Visibility */}
               <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                  <h2 className="font-bold text-lg text-neutral-950 flex items-center gap-2">
                     <Store className="w-5 h-5 text-blue-600" />
                     Кабинет и витрина бизнеса
                   </h2>
@@ -265,7 +259,7 @@ export default function AdminPage() {
                   </Link>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-3">
+                <div className="grid sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">
                       Название
@@ -281,6 +275,27 @@ export default function AdminPage() {
                       }
                       className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Город
+                    </label>
+                    <select
+                      value={current.business.city || "Алматы"}
+                      onChange={(e) =>
+                        updateCurrentLocal((item) => ({
+                          ...item,
+                          business: { ...item.business, city: e.target.value },
+                        }))
+                      }
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                    >
+                      {KZ_CITIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">
@@ -316,10 +331,9 @@ export default function AdminPage() {
                 </label>
               </div>
 
-              {/* Hidden AI Agent Configuration (ONLY ADMIN) */}
               <div className="bg-white p-6 rounded-2xl border-2 border-purple-200 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                  <h2 className="font-bold text-lg text-neutral-950 flex items-center gap-2">
                     <Bot className="w-5 h-5 text-purple-600" />
                     Настройка ИИ-агента (скрыто от бизнеса)
                   </h2>
@@ -368,7 +382,7 @@ export default function AdminPage() {
                         aiConfig: { ...item.aiConfig, system_prompt: e.target.value },
                       }))
                     }
-                    placeholder="Опишите роль, тон общения, правила продаж, ответы на частые вопросы..."
+                    placeholder="Опишите роль, тон общения, правила продаж..."
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                   />
                 </div>
@@ -382,9 +396,8 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* Products Management by Admin */}
               <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
-                <h2 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                <h2 className="font-bold text-lg text-neutral-950 flex items-center gap-2">
                   <Package className="w-5 h-5 text-slate-700" />
                   Товары и услуги на витрине ({current.products.length})
                 </h2>
@@ -418,7 +431,7 @@ export default function AdminPage() {
                   />
                   <button
                     type="submit"
-                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium"
+                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-neutral-950 text-white text-sm font-medium"
                   >
                     <Plus className="w-4 h-4" />
                     Добавить
@@ -432,7 +445,7 @@ export default function AdminPage() {
                       className="py-2.5 flex items-center justify-between gap-3 text-sm"
                     >
                       <div>
-                        <span className="font-medium text-slate-900">{p.name}</span>{" "}
+                        <span className="font-medium text-neutral-950">{p.name}</span>{" "}
                         <span className="text-xs text-slate-400">({p.category})</span>
                       </div>
                       <div className="flex items-center gap-3">

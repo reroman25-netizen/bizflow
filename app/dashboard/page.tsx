@@ -26,6 +26,8 @@ import {
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, Product, Order, ClientRecord, OrderStatus } from "@/lib/types";
 import { formatKZT, formatDate, slugify } from "@/lib/format";
+import { KZ_CITIES } from "@/lib/cities";
+import { BrandLogo } from "@/components/BrandLogo";
 
 type TabId = "company" | "catalog" | "contacts" | "orders" | "clients" | "share" | "ai";
 
@@ -46,13 +48,14 @@ export default function DashboardPage() {
 
   const [activeTab, setActiveTab] = useState<TabId>("company");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [origin, setOrigin] = useState("https://your-site.vercel.app");
+  const [origin, setOrigin] = useState("https://tiyin.kz");
   const [copied, setCopied] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
 
   // First-time business creation form
   const [createName, setCreateName] = useState("");
   const [createSlug, setCreateSlug] = useState("");
+  const [createCity, setCreateCity] = useState("Алматы");
   const [createTagline, setCreateTagline] = useState("");
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -77,7 +80,10 @@ export default function DashboardPage() {
       return;
     }
 
-    const typedBiz = biz as Business;
+    const typedBiz = {
+      ...(biz as Business),
+      city: (biz as Business).city || "Алматы",
+    };
     setBusiness(typedBiz);
 
     const [prodRes, ordRes, cliRes, aiRes] = await Promise.all([
@@ -135,7 +141,6 @@ export default function DashboardPage() {
         .eq("id", user.id)
         .maybeSingle();
 
-      // Клиенты не имеют доступа в кабинет бизнеса
       if (prof && prof.role === "client") {
         setAccessDenied(true);
         setLoading(false);
@@ -156,8 +161,9 @@ export default function DashboardPage() {
     setCreating(true);
 
     const finalSlug = slugify(createSlug || createName);
-    if (!finalSlug || finalSlug.length < 2) {
-      setCreateError("Укажите корректное название или короткую ссылку на латинице.");
+    const reserved = ["admin", "dashboard", "auth", "api"];
+    if (!finalSlug || finalSlug.length < 2 || reserved.includes(finalSlug)) {
+      setCreateError("Укажите другое название или короткую ссылку на латинице.");
       setCreating(false);
       return;
     }
@@ -167,6 +173,7 @@ export default function DashboardPage() {
       owner_id: userId,
       name: createName.trim(),
       slug: finalSlug,
+      city: createCity,
       tagline: createTagline.trim(),
     });
 
@@ -192,6 +199,7 @@ export default function DashboardPage() {
       .from("businesses")
       .update({
         name: business.name,
+        city: business.city,
         tagline: business.tagline,
         services_description: business.services_description,
         address: business.address,
@@ -284,10 +292,10 @@ export default function DashboardPage() {
 
   if (accessDenied) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center px-4 bg-[#FAFAFB]">
         <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-slate-200 text-center space-y-4">
           <Lock className="w-10 h-10 text-slate-400 mx-auto" />
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-bold text-neutral-950">
             Доступ только для владельцев бизнеса
           </h1>
           <p className="text-sm text-slate-500">
@@ -303,7 +311,7 @@ export default function DashboardPage() {
             </Link>
             <button
               onClick={handleLogout}
-              className="px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium"
+              className="px-4 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-medium"
             >
               Выйти
             </button>
@@ -313,20 +321,20 @@ export default function DashboardPage() {
     );
   }
 
-  // Первый вход владельца бизнеса — создание своей платформы
+  // Первый вход владельца бизнеса — создание платформы с выбором города
   if (!business) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-[#FAFAFB]">
         <div className="max-w-lg w-full bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm">
-          <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mb-4">
-            <Building2 className="w-6 h-6" />
+          <div className="mb-5">
+            <BrandLogo size="sm" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1">
+          <h1 className="text-2xl font-bold text-neutral-950 mb-1">
             Запустите платформу вашего бизнеса
           </h1>
           <p className="text-sm text-slate-500 mb-6">
-            Заполните базовую информацию — ваша онлайн-витрина и QR-код создадутся
-            сразу после нажатия кнопки.
+            Укажите название, город и короткую ссылку — ваша витрина и QR-код
+            создадутся сразу.
           </p>
 
           <form onSubmit={handleCreateBusiness} className="space-y-4">
@@ -341,10 +349,27 @@ export default function DashboardPage() {
                   setCreateName(e.target.value);
                   setCreateSlug(slugify(e.target.value));
                 }}
-                placeholder="Например: Чебуречная у Айгерим"
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                placeholder="Например: Ameli Shop"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                 required
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Город (Казахстан)
+              </label>
+              <select
+                value={createCity}
+                onChange={(e) => setCreateCity(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+              >
+                {KZ_CITIES.map((city) => (
+                  <option key={city} value={city}>
+                    {city}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -359,7 +384,7 @@ export default function DashboardPage() {
                   type="text"
                   value={createSlug}
                   onChange={(e) => setCreateSlug(slugify(e.target.value))}
-                  placeholder="aigerim"
+                  placeholder="ameli-shop"
                   className="flex-1 px-3 py-3 bg-white text-sm focus:outline-none"
                   required
                 />
@@ -374,8 +399,8 @@ export default function DashboardPage() {
                 type="text"
                 value={createTagline}
                 onChange={(e) => setCreateTagline(e.target.value)}
-                placeholder="Горячая выпечка, стоматология, автосервис..."
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                placeholder="Авторские букеты, стоматология, автосервис..."
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
               />
             </div>
 
@@ -388,7 +413,7 @@ export default function DashboardPage() {
             <button
               type="submit"
               disabled={creating}
-              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition"
+              className="w-full py-3.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white font-semibold text-sm transition"
             >
               {creating ? "Создаем..." : "Создать кабинет и витрину"}
             </button>
@@ -417,14 +442,14 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[#FAFAFB] flex flex-col md:flex-row">
       {/* Mobile Header */}
       <div className="md:hidden bg-white border-b border-slate-200 px-4 h-14 flex items-center justify-between sticky top-0 z-30">
-        <div className="font-bold text-slate-900 truncate">{business.name}</div>
+        <div className="font-bold text-neutral-950 truncate">{business.name}</div>
         <div className="flex items-center gap-2">
           <Link
             href={`/${business.slug}`}
-            className="text-xs px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 font-medium"
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-neutral-100 text-neutral-900 font-medium"
           >
             Витрина
           </Link>
@@ -444,15 +469,17 @@ export default function DashboardPage() {
         } md:flex md:flex-col w-full md:w-64 bg-white border-r border-slate-200 md:min-h-screen p-4 justify-between`}
       >
         <div>
-          <div className="hidden md:flex items-center gap-2.5 px-2 py-2 mb-6">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center shrink-0">
-              {business.name.slice(0, 1).toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-sm text-slate-900 truncate">
+          <div className="hidden md:block px-2 py-2 mb-5">
+            <Link href="/">
+              <BrandLogo size="sm" />
+            </Link>
+            <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="font-semibold text-sm text-neutral-950 truncate">
                 {business.name}
               </div>
-              <div className="text-xs text-slate-400 truncate">/{business.slug}</div>
+              <div className="text-xs text-slate-500 truncate mt-0.5">
+                {business.city} • /{business.slug}
+              </div>
             </div>
           </div>
 
@@ -466,7 +493,7 @@ export default function DashboardPage() {
                 }}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition ${
                   activeTab === item.id
-                    ? "bg-blue-50 text-blue-700"
+                    ? "bg-neutral-950 text-white"
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
@@ -488,7 +515,7 @@ export default function DashboardPage() {
           <Link
             href={`/${business.slug}`}
             target="_blank"
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-100 text-neutral-900 text-sm font-medium hover:bg-slate-200 transition"
           >
             <ExternalLink className="w-4 h-4" />
             Открыть витрину
@@ -515,24 +542,42 @@ export default function DashboardPage() {
         {activeTab === "company" && (
           <form onSubmit={handleSaveBusiness} className="space-y-5">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">О компании и услугах</h1>
+              <h1 className="text-2xl font-bold text-neutral-950">О компании и услугах</h1>
               <p className="text-sm text-slate-500">
                 Эта информация отображается клиентам в поиске и на вашей витрине
               </p>
             </div>
 
             <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Название компании
-                </label>
-                <input
-                  type="text"
-                  value={business.name}
-                  onChange={(e) => setBusiness({ ...business, name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
-                  required
-                />
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Название компании
+                  </label>
+                  <input
+                    type="text"
+                    value={business.name}
+                    onChange={(e) => setBusiness({ ...business, name: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Город
+                  </label>
+                  <select
+                    value={business.city || "Алматы"}
+                    onChange={(e) => setBusiness({ ...business, city: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    {KZ_CITIES.map((city) => (
+                      <option key={city} value={city}>
+                        {city}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -543,7 +588,7 @@ export default function DashboardPage() {
                   type="text"
                   value={business.tagline}
                   onChange={(e) => setBusiness({ ...business, tagline: e.target.value })}
-                  placeholder="Например: Горячие чебуреки и самса с доставкой"
+                  placeholder="Например: Авторские букеты и подарки с доставкой"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                 />
               </div>
@@ -572,7 +617,7 @@ export default function DashboardPage() {
                     type="text"
                     value={business.address}
                     onChange={(e) => setBusiness({ ...business, address: e.target.value })}
-                    placeholder="г. Алматы, ул. Абая 50"
+                    placeholder="ул. Абая 50"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                   />
                 </div>
@@ -594,7 +639,7 @@ export default function DashboardPage() {
 
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
               >
                 <Save className="w-4 h-4" />
                 Сохранить изменения
@@ -607,7 +652,7 @@ export default function DashboardPage() {
         {activeTab === "catalog" && (
           <div className="space-y-6">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Каталог товаров и услуг</h1>
+              <h1 className="text-2xl font-bold text-neutral-950">Каталог товаров и услуг</h1>
               <p className="text-sm text-slate-500">
                 Добавляйте позиции — они сразу появятся на витрине и в ответах ИИ-агента
               </p>
@@ -642,7 +687,7 @@ export default function DashboardPage() {
               />
               <button
                 type="submit"
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
               >
                 <Plus className="w-4 h-4" />
                 Добавить
@@ -669,7 +714,7 @@ export default function DashboardPage() {
                 >
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-900">{prod.name}</span>
+                      <span className="font-semibold text-neutral-950">{prod.name}</span>
                       <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
                         {prod.category}
                       </span>
@@ -680,7 +725,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <span className="font-bold text-slate-900">
+                    <span className="font-bold text-neutral-950">
                       {formatKZT(prod.price)}
                     </span>
                     <button
@@ -710,7 +755,7 @@ export default function DashboardPage() {
         {activeTab === "contacts" && (
           <form onSubmit={handleSaveBusiness} className="space-y-5 max-w-xl">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Контакты для клиентов</h1>
+              <h1 className="text-2xl font-bold text-neutral-950">Контакты для клиентов</h1>
               <p className="text-sm text-slate-500">
                 Появятся на вашей витрине в виде удобных кнопок связи
               </p>
@@ -758,7 +803,7 @@ export default function DashboardPage() {
 
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
               >
                 <Save className="w-4 h-4" />
                 Сохранить контакты
@@ -770,7 +815,7 @@ export default function DashboardPage() {
         {/* TAB: ORDERS */}
         {activeTab === "orders" && (
           <div className="space-y-4">
-            <h1 className="text-2xl font-bold text-slate-900">Заказы с витрины</h1>
+            <h1 className="text-2xl font-bold text-neutral-950">Заказы с витрины</h1>
             {orders.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
                 Заказов пока нет. Поделитесь ссылкой или QR-кодом с клиентами.
@@ -784,7 +829,7 @@ export default function DashboardPage() {
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900">{ord.order_code}</span>
+                        <span className="font-bold text-neutral-950">{ord.order_code}</span>
                         <span className="text-xs text-slate-400">
                           {formatDate(ord.created_at)}
                         </span>
@@ -805,7 +850,7 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2">
-                      <div className="text-lg font-bold text-slate-900">
+                      <div className="text-lg font-bold text-neutral-950">
                         {formatKZT(ord.total_price)}
                       </div>
                       <select
@@ -832,7 +877,7 @@ export default function DashboardPage() {
         {activeTab === "clients" && (
           <div className="space-y-4">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">База клиентов</h1>
+              <h1 className="text-2xl font-bold text-neutral-950">База клиентов</h1>
               <p className="text-sm text-slate-500">
                 Формируется автоматически после каждого заказа с вашей витрины
               </p>
@@ -858,10 +903,10 @@ export default function DashboardPage() {
                   ) : (
                     clients.map((c) => (
                       <tr key={c.id}>
-                        <td className="px-5 py-3.5 font-medium text-slate-900">{c.name}</td>
+                        <td className="px-5 py-3.5 font-medium text-neutral-950">{c.name}</td>
                         <td className="px-5 py-3.5 text-slate-600">{c.phone}</td>
                         <td className="px-5 py-3.5 text-slate-600">{c.orders_count}</td>
-                        <td className="px-5 py-3.5 font-semibold text-slate-900">
+                        <td className="px-5 py-3.5 font-semibold text-neutral-950">
                           {formatKZT(c.total_spent)}
                         </td>
                         <td className="px-5 py-3.5 text-xs text-slate-500">
@@ -880,7 +925,7 @@ export default function DashboardPage() {
         {activeTab === "share" && (
           <div className="space-y-6">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">
+              <h1 className="text-2xl font-bold text-neutral-950">
                 Ссылка и QR-код вашей витрины
               </h1>
               <p className="text-sm text-slate-500">
@@ -888,7 +933,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="bg-white p-6 rounded-2xl border border-slate-200 flex flex-col md:flex-row items-center gap-8">
-              <div className="p-4 bg-white rounded-2xl border-2 border-slate-900">
+              <div className="p-4 bg-white rounded-2xl border-2 border-neutral-950">
                 <QRCodeSVG value={publicUrl} size={180} />
               </div>
               <div className="flex-1 space-y-4 w-full">
@@ -909,7 +954,7 @@ export default function DashboardPage() {
                         setCopied(true);
                         setTimeout(() => setCopied(false), 2000);
                       }}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-neutral-950 text-white text-sm font-medium hover:bg-neutral-800"
                     >
                       {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                       {copied ? "Скопировано" : "Копировать"}
@@ -931,7 +976,7 @@ export default function DashboardPage() {
         {activeTab === "ai" && (
           <div className="space-y-5 max-w-2xl">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">ИИ-агент вашего бизнеса</h1>
+              <h1 className="text-2xl font-bold text-neutral-950">ИИ-агент вашего бизнеса</h1>
               <p className="text-sm text-slate-500">
                 Автоматически консультирует клиентов на витрине по вашему каталогу 24/7
               </p>
@@ -940,11 +985,11 @@ export default function DashboardPage() {
             <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <div className="w-11 h-11 rounded-2xl bg-neutral-100 text-neutral-900 flex items-center justify-center">
                     <Bot className="w-6 h-6" />
                   </div>
                   <div>
-                    <div className="font-semibold text-slate-900">Статус ИИ-агента</div>
+                    <div className="font-semibold text-neutral-950">Статус ИИ-агента</div>
                     <div className="text-xs text-slate-500">{aiStatus.status_label}</div>
                   </div>
                 </div>
@@ -962,7 +1007,7 @@ export default function DashboardPage() {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
                 <Lock className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  <strong>Настройка управляется администратором платформы.</strong> Вам не
+                  <strong>Настройка управляется администратором TIYIN Space.</strong> Вам не
                   нужно прописывать сценарии вручную — просто обновляйте раздел «Каталог
                   товаров» и «О компании», а наша команда индивидуально настроит и обучит
                   ИИ-агента под ваш бизнес.

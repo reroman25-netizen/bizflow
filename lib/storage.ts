@@ -1,2 +1,2 @@
-// Данные перенесены в Supabase (lib/supabaseClient.ts)
+// Данные хранятся в Supabase (lib/supabaseClient.ts)
 export {};

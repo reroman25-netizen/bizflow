@@ -19,6 +19,7 @@ export async function PATCH(req: NextRequest) {
         .from("businesses")
         .update({
           name: business.name,
+          city: business.city || "Алматы",
           tagline: business.tagline,
           services_description: business.services_description,
           address: business.address,
