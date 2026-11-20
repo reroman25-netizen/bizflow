@@ -1,22 +1,43 @@
-export interface BusinessProfile {
+export type UserRole = "client" | "business" | "admin";
+
+export interface Profile {
+  id: string;
+  email: string | null;
+  full_name: string;
+  role: UserRole;
+}
+
+export interface Business {
+  id: string;
+  owner_id: string;
   slug: string;
   name: string;
   tagline: string;
+  services_description: string;
   address: string;
-  workingHours: string;
-  whatsappPhone: string;
-  kaspiPhone: string;
-  aiEnabled: boolean;
-  aiPrompt: string;
+  working_hours: string;
+  phone: string;
+  whatsapp: string;
+  telegram: string;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface BusinessAiConfig {
+  business_id: string;
+  ai_enabled: boolean;
+  status_label: string;
+  system_prompt: string;
 }
 
 export interface Product {
   id: string;
+  business_id: string;
   name: string;
   description: string;
   price: number;
   category: string;
-  isAvailable: boolean;
+  is_available: boolean;
 }
 
 export interface OrderItem {
@@ -26,32 +47,28 @@ export interface OrderItem {
   quantity: number;
 }
 
-export type OrderStatus = "new" | "in_progress" | "done";
+export type OrderStatus = "new" | "in_progress" | "done" | "cancelled";
 
 export interface Order {
   id: string;
-  clientName: string;
-  clientPhone: string;
-  address: string;
+  order_code: string;
+  business_id: string;
+  client_name: string;
+  client_phone: string;
+  comment: string;
   items: OrderItem[];
-  totalPrice: number;
+  total_price: number;
   status: OrderStatus;
-  paymentMethod: "Kaspi Pay" | "Наличные";
-  createdAt: string;
+  payment_method: string;
+  created_at: string;
 }
 
 export interface ClientRecord {
   id: string;
+  business_id: string;
   name: string;
   phone: string;
-  ordersCount: number;
-  totalSpent: number;
-  lastOrderAt: string;
-}
-
-export interface PlatformData {
-  business: BusinessProfile;
-  products: Product[];
-  orders: Order[];
-  clients: ClientRecord[];
+  orders_count: number;
+  total_spent: number;
+  last_order_at: string;
 }

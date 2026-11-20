@@ -6,17 +6,20 @@ import Link from "next/link";
 import {
   MapPin,
   Clock,
+  Phone,
+  MessageCircle,
+  Send,
   ShoppingCart,
   Plus,
   Minus,
   Bot,
-  Send,
   X,
   CheckCircle2,
   ArrowLeft,
 } from "lucide-react";
-import { loadPlatformData, savePlatformData, formatKZT } from "@/lib/storage";
-import { PlatformData, Order } from "@/lib/types";
+import { getSupabaseClient } from "@/lib/supabaseClient";
+import { Business, Product } from "@/lib/types";
+import { formatKZT, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -27,33 +30,89 @@ export default function BusinessStorefrontPage() {
   const params = useParams();
   const slug = String(params?.slug || "");
 
-  const [data, setData] = useState<PlatformData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [business, setBusiness] = useState<Business | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [aiEnabled, setAiEnabled] = useState(false);
+
   const [selectedCategory, setSelectedCategory] = useState("Все");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
 
-  // Checkout form
+  // Order form (works without registration)
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("+7 ");
-  const [address, setAddress] = useState("");
+  const [comment, setComment] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
 
-  // AI Chat state
+  // AI Chat
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
       role: "assistant",
-      text: "Здравствуйте! Я ИИ-помощник. Подсказать по меню, ценам или доставке?",
+      text: "Здравствуйте! Я ИИ-помощник компании. Подсказать по услугам, ценам или наличию?",
     },
   ]);
 
   useEffect(() => {
-    setData(loadPlatformData());
-  }, []);
+    const loadStorefront = async () => {
+      const supabase = getSupabaseClient();
 
-  if (!data) {
+      // Если клиент авторизован (опционально) — подтянем его имя
+      const { data: sess } = await supabase.auth.getSession();
+      if (sess.session?.user) {
+        setUserId(sess.session.user.id);
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", sess.session.user.id)
+          .maybeSingle();
+        if (prof?.full_name) setClientName(prof.full_name);
+      }
+
+      const { data: biz } = await supabase
+        .from("businesses")
+        .select("*")
+        .eq("slug", slug)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!biz) {
+        setBusiness(null);
+        setLoading(false);
+        return;
+      }
+
+      const typedBiz = biz as Business;
+      setBusiness(typedBiz);
+
+      const [prodRes, aiRes] = await Promise.all([
+        supabase
+          .from("products")
+          .select("*")
+          .eq("business_id", typedBiz.id)
+          .eq("is_available", true)
+          .order("created_at", { ascending: false }),
+        fetch(`/api/ai-status?businessId=${typedBiz.id}`),
+      ]);
+
+      setProducts((prodRes.data as Product[]) || []);
+      if (aiRes.ok) {
+        const aiJson = await aiRes.json();
+        setAiEnabled(Boolean(aiJson.ai_enabled));
+      }
+
+      setLoading(false);
+    };
+
+    if (slug) loadStorefront();
+  }, [slug]);
+
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-slate-500">
         Загрузка витрины...
@@ -61,15 +120,31 @@ export default function BusinessStorefrontPage() {
     );
   }
 
-  const availableProducts = data.products.filter((p) => p.isAvailable);
+  if (!business) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center bg-slate-50">
+        <h1 className="text-2xl font-bold text-slate-900 mb-2">Компания не найдена</h1>
+        <p className="text-sm text-slate-500 mb-6">
+          Проверьте ссылку или найдите нужную компанию через поиск.
+        </p>
+        <Link
+          href="/"
+          className="px-5 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold"
+        >
+          Перейти к поиску
+        </Link>
+      </div>
+    );
+  }
+
   const categories = [
     "Все",
-    ...Array.from(new Set(availableProducts.map((p) => p.category))),
+    ...Array.from(new Set(products.map((p) => p.category || "Услуги"))),
   ];
   const filteredProducts =
     selectedCategory === "Все"
-      ? availableProducts
-      : availableProducts.filter((p) => p.category === selectedCategory);
+      ? products
+      : products.filter((p) => (p.category || "Услуги") === selectedCategory);
 
   const addToCart = (id: string) =>
     setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
@@ -84,7 +159,7 @@ export default function BusinessStorefrontPage() {
 
   const cartItems = Object.entries(cart)
     .map(([id, qty]) => {
-      const prod = data.products.find((p) => p.id === id);
+      const prod = products.find((p) => p.id === id);
       if (!prod) return null;
       return { productId: prod.id, name: prod.name, price: prod.price, quantity: qty };
     })
@@ -93,61 +168,33 @@ export default function BusinessStorefrontPage() {
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
   const cartTotal = cartItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-  const handleCheckout = (e: React.FormEvent) => {
+  const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientName.trim() || !clientPhone.trim() || cartItems.length === 0) return;
+    setSubmittingOrder(true);
 
-    const nowLabel =
-      "Сегодня, " +
-      new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-
-    const newOrder: Order = {
-      id: "ORD-" + Math.floor(1050 + Math.random() * 8900),
-      clientName: clientName.trim(),
-      clientPhone: clientPhone.trim(),
-      address: address.trim() || "Самовывоз",
-      items: cartItems,
-      totalPrice: cartTotal,
-      status: "new",
-      paymentMethod: "Kaspi Pay",
-      createdAt: nowLabel,
-    };
-
-    const existingClientIndex = data.clients.findIndex(
-      (c) => c.phone.replace(/\D/g, "") === clientPhone.replace(/\D/g, "")
-    );
-
-    const updatedClients = [...data.clients];
-    if (existingClientIndex >= 0) {
-      const existing = updatedClients[existingClientIndex];
-      updatedClients[existingClientIndex] = {
-        ...existing,
-        ordersCount: existing.ordersCount + 1,
-        totalSpent: existing.totalSpent + cartTotal,
-        lastOrderAt: nowLabel,
-      };
-    } else {
-      updatedClients.unshift({
-        id: "c-" + Date.now(),
-        name: clientName.trim(),
-        phone: clientPhone.trim(),
-        ordersCount: 1,
-        totalSpent: cartTotal,
-        lastOrderAt: nowLabel,
+    try {
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessId: business.id,
+          userId,
+          clientName: clientName.trim(),
+          clientPhone: clientPhone.trim(),
+          comment: comment.trim(),
+          items: cartItems.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        }),
       });
+      const json = await res.json();
+      if (res.ok) {
+        setCart({});
+        setCheckoutOpen(false);
+        setOrderSuccess(json.orderCode || "Принят");
+      }
+    } finally {
+      setSubmittingOrder(false);
     }
-
-    const nextData: PlatformData = {
-      ...data,
-      orders: [newOrder, ...data.orders],
-      clients: updatedClients,
-    };
-
-    setData(nextData);
-    savePlatformData(nextData);
-    setCart({});
-    setCheckoutOpen(false);
-    setOrderSuccess(newOrder.id);
   };
 
   const handleSendChat = async (e: React.FormEvent) => {
@@ -164,21 +211,19 @@ export default function BusinessStorefrontPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          businessId: business.id,
           message: text,
-          businessName: data.business.name,
-          aiPrompt: data.business.aiPrompt,
-          products: data.products,
         }),
       });
       const json = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: json.reply || "Готов помочь с заказом!" },
+        { role: "assistant", text: json.reply || "Готов помочь!" },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: "Не удалось связаться с сервером. Попробуйте еще раз." },
+        { role: "assistant", text: "Ошибка связи. Попробуйте еще раз." },
       ]);
     } finally {
       setChatLoading(false);
@@ -187,129 +232,177 @@ export default function BusinessStorefrontPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-28">
-      {/* Top Business Banner (Isolated Storefront) */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-2xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between mb-2">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Поиск
-            </Link>
-            <Link
-              href="/dashboard"
-              className="text-xs font-medium text-blue-600 hover:underline"
-            >
-              В кабинет ИП →
-            </Link>
+      {/* Storefront Header (ONLY this business) */}
+      <header className="bg-white border-b border-slate-200">
+        <div className="max-w-2xl mx-auto px-4 py-5 space-y-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Найти другую компанию
+          </Link>
+
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">{business.name}</h1>
+            {business.tagline && (
+              <p className="text-sm text-slate-600 mt-1">{business.tagline}</p>
+            )}
           </div>
-          <h1 className="text-xl font-bold text-slate-900">{data.business.name}</h1>
-          <p className="text-xs text-slate-500 mt-0.5">{data.business.tagline}</p>
-          <div className="flex flex-wrap gap-3 mt-2.5 text-xs text-slate-600">
-            <span className="inline-flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-slate-400" />
-              {data.business.address}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5 text-slate-400" />
-              {data.business.workingHours}
-            </span>
+
+          {business.services_description && (
+            <p className="text-xs sm:text-sm text-slate-600 bg-slate-50 rounded-xl p-3.5 whitespace-pre-line">
+              {business.services_description}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+            {business.address && (
+              <span className="inline-flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                {business.address}
+              </span>
+            )}
+            {business.working_hours && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                {business.working_hours}
+              </span>
+            )}
           </div>
+
+          {/* Contacts buttons */}
+          {(business.phone || business.whatsapp || business.telegram) && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {business.phone && (
+                <a
+                  href={`tel:${business.phone}`}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold transition"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  Позвонить
+                </a>
+              )}
+              {business.whatsapp && (
+                <a
+                  href={`https://wa.me/${cleanPhoneForWa(business.whatsapp)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold transition"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  WhatsApp
+                </a>
+              )}
+              {business.telegram && (
+                <a
+                  href={`https://t.me/${cleanTelegramHandle(business.telegram)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-semibold transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Telegram
+                </a>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Catalog */}
       <main className="max-w-2xl mx-auto px-4 pt-5 space-y-5">
-        {slug !== data.business.slug && (
-          <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-xl">
-            Показана демо-витрина «{data.business.name}».
-          </div>
-        )}
-
         {orderSuccess && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-start gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
             <div className="text-sm">
               <div className="font-semibold text-emerald-900">
-                Заказ {orderSuccess} оплачен и передан в работу!
+                Заявка {orderSuccess} отправлена в «{business.name}»!
               </div>
               <p className="text-emerald-700 text-xs mt-0.5">
-                Проверьте раздел «Заказы» и «База клиентов» в Кабинете ИП — данные уже там.
+                Менеджер свяжется с вами для подтверждения оплаты и доставки.
               </p>
             </div>
           </div>
         )}
 
-        {/* Categories */}
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-2 rounded-full text-xs font-medium whitespace-nowrap transition ${
-                selectedCategory === cat
-                  ? "bg-slate-900 text-white"
-                  : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        {/* Product List */}
-        <div className="space-y-3">
-          {filteredProducts.map((product) => {
-            const qty = cart[product.id] || 0;
-            return (
-              <div
-                key={product.id}
-                className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between gap-4"
+        {products.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-4 py-2 rounded-full text-xs font-medium whitespace-nowrap transition ${
+                  selectedCategory === cat
+                    ? "bg-slate-900 text-white"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                }`}
               >
-                <div className="min-w-0">
-                  <div className="font-semibold text-slate-900">{product.name}</div>
-                  <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
-                    {product.description}
-                  </p>
-                  <div className="font-bold text-slate-900 mt-2">
-                    {formatKZT(product.price)}
-                  </div>
-                </div>
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
 
-                {qty === 0 ? (
-                  <button
-                    onClick={() => addToCart(product.id)}
-                    className="shrink-0 inline-flex items-center gap-1 px-3.5 py-2 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Добавить
-                  </button>
-                ) : (
-                  <div className="shrink-0 flex items-center gap-2 bg-slate-100 rounded-xl p-1">
-                    <button
-                      onClick={() => removeFromCart(product.id)}
-                      className="w-7 h-7 rounded-lg bg-white flex items-center justify-center text-slate-700 shadow-sm"
-                    >
-                      <Minus className="w-3.5 h-3.5" />
-                    </button>
-                    <span className="w-5 text-center text-sm font-semibold">{qty}</span>
+        <div className="space-y-3">
+          {filteredProducts.length === 0 ? (
+            <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
+              Каталог компании пока наполняется. Вы можете связаться по контактам выше
+              или написать ИИ-помощнику.
+            </div>
+          ) : (
+            filteredProducts.map((product) => {
+              const qty = cart[product.id] || 0;
+              return (
+                <div
+                  key={product.id}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between gap-4"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-900">{product.name}</div>
+                    {product.description && (
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
+                        {product.description}
+                      </p>
+                    )}
+                    <div className="font-bold text-slate-900 mt-2">
+                      {formatKZT(product.price)}
+                    </div>
+                  </div>
+
+                  {qty === 0 ? (
                     <button
                       onClick={() => addToCart(product.id)}
-                      className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm"
+                      className="shrink-0 inline-flex items-center gap-1 px-3.5 py-2 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4" />
+                      Выбрать
                     </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  ) : (
+                    <div className="shrink-0 flex items-center gap-2 bg-slate-100 rounded-xl p-1">
+                      <button
+                        onClick={() => removeFromCart(product.id)}
+                        className="w-7 h-7 rounded-lg bg-white flex items-center justify-center text-slate-700 shadow-sm"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="w-5 text-center text-sm font-semibold">{qty}</span>
+                      <button
+                        onClick={() => addToCart(product.id)}
+                        className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </main>
 
-      {/* Floating Bottom Bar: Cart & AI Chat */}
+      {/* Bottom Floating Cart & AI Chat */}
       <div className="fixed bottom-4 inset-x-0 px-4 z-30 pointer-events-none">
         <div className="max-w-2xl mx-auto flex items-center justify-end gap-3">
           {cartCount > 0 && (
@@ -319,19 +412,19 @@ export default function BusinessStorefrontPage() {
             >
               <span className="flex items-center gap-2 text-sm font-medium">
                 <ShoppingCart className="w-4 h-4" />
-                Корзина ({cartCount})
+                Заказ ({cartCount})
               </span>
               <span className="font-bold text-sm">{formatKZT(cartTotal)}</span>
             </button>
           )}
 
-          {data.business.aiEnabled && (
+          {aiEnabled && (
             <button
               onClick={() => setChatOpen(true)}
-              className="pointer-events-auto flex items-center gap-2 px-4 py-3.5 rounded-2xl bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition text-sm font-medium"
+              className="pointer-events-auto flex items-center gap-2 px-4 py-3.5 rounded-2xl bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition text-sm font-semibold"
             >
               <Bot className="w-5 h-5" />
-              <span className="hidden sm:inline">Чат с ИИ</span>
+              <span>Чат с ИИ</span>
             </button>
           )}
         </div>
@@ -342,7 +435,7 @@ export default function BusinessStorefrontPage() {
         <div className="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-900">Оформление заказа</h2>
+              <h2 className="text-lg font-bold text-slate-900">Оформление заявки</h2>
               <button
                 onClick={() => setCheckoutOpen(false)}
                 className="p-1 text-slate-400 hover:text-slate-700"
@@ -361,7 +454,7 @@ export default function BusinessStorefrontPage() {
                 </div>
               ))}
               <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between font-bold text-sm text-slate-900">
-                <span>Итого к оплате</span>
+                <span>Итого</span>
                 <span>{formatKZT(cartTotal)}</span>
               </div>
             </div>
@@ -377,7 +470,7 @@ export default function BusinessStorefrontPage() {
               />
               <input
                 type="tel"
-                placeholder="Номер телефона (Kaspi)"
+                placeholder="Ваш телефон (WhatsApp / Kaspi)"
                 value={clientPhone}
                 onChange={(e) => setClientPhone(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
@@ -385,16 +478,21 @@ export default function BusinessStorefrontPage() {
               />
               <input
                 type="text"
-                placeholder="Адрес доставки (или Самовывоз)"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Адрес или комментарий к заказу"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
               />
+              <p className="text-[11px] text-slate-500">
+                Онлайн-оплата и доставка будут добавлены на следующем этапе. Сейчас заявка
+                сразу поступает в кабинет компании.
+              </p>
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-red-600 text-white font-semibold text-sm hover:bg-red-700 transition"
+                disabled={submittingOrder}
+                className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 transition"
               >
-                Оплатить через Kaspi Pay • {formatKZT(cartTotal)}
+                {submittingOrder ? "Отправка..." : "Отправить заказ"}
               </button>
             </form>
           </div>
@@ -409,8 +507,8 @@ export default function BusinessStorefrontPage() {
               <div className="flex items-center gap-2">
                 <Bot className="w-5 h-5" />
                 <div>
-                  <div className="font-semibold text-sm">ИИ-помощник</div>
-                  <div className="text-[11px] text-blue-100">{data.business.name}</div>
+                  <div className="font-semibold text-sm">ИИ-агент</div>
+                  <div className="text-[11px] text-blue-100">{business.name}</div>
                 </div>
               </div>
               <button
@@ -451,7 +549,7 @@ export default function BusinessStorefrontPage() {
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Спросите про меню или доставку..."
+                placeholder="Напишите ваш вопрос..."
                 className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
               <button
