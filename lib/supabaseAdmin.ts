@@ -52,3 +52,27 @@ export async function verifyAdminRequest(authHeader: string | null) {
 
   return { ok: true as const, user, admin };
 }
+
+export async function verifyBusinessOwnerRequest(authHeader: string | null) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { ok: false as const, error: "Требуется авторизация" };
+  }
+  const token = authHeader.slice(7).trim();
+  const admin = getSupabaseAdmin();
+  const { data: userData, error } = await admin.auth.getUser(token);
+  if (error || !userData?.user) {
+    return { ok: false as const, error: "Недействительная сессия" };
+  }
+
+  const { data: business } = await admin
+    .from("businesses")
+    .select("*")
+    .eq("owner_id", userData.user.id)
+    .maybeSingle();
+
+  if (!business) {
+    return { ok: false as const, error: "Бизнес не найден" };
+  }
+
+  return { ok: true as const, user: userData.user, business, admin };
+}

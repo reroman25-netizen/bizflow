@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { notifyOwnerNewOrder } from "@/lib/telegramNotify";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { businessId, userId, clientName, clientPhone, comment, items } = body;
+    const {
+      businessId,
+      userId,
+      clientName,
+      clientPhone,
+      comment,
+      items,
+      source,
+      paymentMethod,
+      deliveryMethod,
+    } = body;
 
     if (!businessId || !clientName || !clientPhone || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: "Заполните все поля заказа" }, { status: 400 });
@@ -15,14 +26,22 @@ export async function POST(req: NextRequest) {
     const admin = getSupabaseAdmin();
 
     const productIds = items.map((i: { productId: string }) => i.productId);
-    const { data: dbProducts } = await admin
-      .from("products")
-      .select("id, name, price")
-      .eq("business_id", businessId)
-      .in("id", productIds);
+    const [prodRes, bizRes, chanRes] = await Promise.all([
+      admin
+        .from("products")
+        .select("id, name, price")
+        .eq("business_id", businessId)
+        .in("id", productIds),
+      admin.from("businesses").select("name").eq("id", businessId).maybeSingle(),
+      admin
+        .from("business_channels")
+        .select("owner_telegram_chat_id")
+        .eq("business_id", businessId)
+        .maybeSingle(),
+    ]);
 
     const productMap = new Map(
-      (dbProducts || []).map((p: { id: string; name: string; price: number }) => [
+      (prodRes.data || []).map((p: { id: string; name: string; price: number }) => [
         p.id,
         { name: p.name, price: p.price },
       ])
@@ -48,6 +67,9 @@ export async function POST(req: NextRequest) {
 
     const totalPrice = verifiedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const orderCode = "ORD-" + Math.floor(1000 + Math.random() * 9000);
+    const orderSource = String(source || "web");
+    const finalPayment = String(paymentMethod || "Согласуем с менеджером");
+    const finalDelivery = String(deliveryMethod || "Самовывоз / Уточнить");
 
     const normalizedPhone = String(clientPhone).trim();
     const { data: existingClient } = await admin
@@ -97,11 +119,29 @@ export async function POST(req: NextRequest) {
       items: verifiedItems,
       total_price: totalPrice,
       status: "new",
-      payment_method: "Согласуем с менеджером",
+      source: orderSource,
+      payment_method: finalPayment,
+      delivery_method: finalDelivery,
     });
 
     if (orderErr) {
       return NextResponse.json({ error: orderErr.message }, { status: 500 });
+    }
+
+    if (chanRes.data?.owner_telegram_chat_id) {
+      await notifyOwnerNewOrder({
+        chatId: chanRes.data.owner_telegram_chat_id,
+        businessName: bizRes.data?.name || "TIYIN Space",
+        orderCode,
+        source: orderSource,
+        clientName: String(clientName).trim(),
+        clientPhone: normalizedPhone,
+        paymentMethod: finalPayment,
+        deliveryMethod: finalDelivery,
+        comment: String(comment || "").trim(),
+        items: verifiedItems,
+        totalPrice,
+      });
     }
 
     return NextResponse.json({ ok: true, orderCode, totalPrice });
