@@ -12,7 +12,7 @@ export async function PATCH(req: NextRequest) {
 
     const { admin } = check;
     const body = await req.json();
-    const { business, aiConfig } = body;
+    const { business, aiConfig, channels } = body;
 
     if (business?.id) {
       await admin
@@ -20,6 +20,7 @@ export async function PATCH(req: NextRequest) {
         .update({
           name: business.name,
           city: business.city || "Алматы",
+          category: business.category || "Магазин / Бутик",
           tagline: business.tagline,
           services_description: business.services_description,
           address: business.address,
@@ -27,19 +28,45 @@ export async function PATCH(req: NextRequest) {
           phone: business.phone,
           whatsapp: business.whatsapp,
           telegram: business.telegram,
+          kaspi_pay_link: business.kaspi_pay_link || "",
+          halyk_enabled: Boolean(business.halyk_enabled),
           is_active: business.is_active,
         })
         .eq("id", business.id);
     }
 
     if (aiConfig?.business_id) {
-      await admin.from("business_ai_configs").upsert({
-        business_id: aiConfig.business_id,
-        ai_enabled: Boolean(aiConfig.ai_enabled),
-        status_label: aiConfig.status_label || "Настраивается администратором",
-        system_prompt: aiConfig.system_prompt || "",
-        updated_at: new Date().toISOString(),
-      });
+      await admin.from("business_ai_configs").upsert(
+        {
+          business_id: aiConfig.business_id,
+          ai_enabled: Boolean(aiConfig.ai_enabled),
+          status_label: aiConfig.status_label || "Настраивается администратором",
+          system_prompt: aiConfig.system_prompt || "",
+          daily_notes: aiConfig.daily_notes || "",
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "business_id" }
+      );
+    }
+
+    if (channels?.business_id) {
+      await admin.from("business_channels").upsert(
+        {
+          business_id: channels.business_id,
+          web_enabled: Boolean(channels.web_enabled),
+          whatsapp_enabled: Boolean(channels.whatsapp_enabled),
+          instagram_enabled: Boolean(channels.instagram_enabled),
+          telegram_enabled: Boolean(channels.telegram_enabled),
+          owner_telegram_chat_id: String(channels.owner_telegram_chat_id || "").trim(),
+          whatsapp_instance_id: String(channels.whatsapp_instance_id || "").trim(),
+          whatsapp_api_token: String(channels.whatsapp_api_token || "").trim(),
+          telegram_bot_token: String(channels.telegram_bot_token || "").trim(),
+          instagram_page_id: String(channels.instagram_page_id || "").trim(),
+          instagram_access_token: String(channels.instagram_access_token || "").trim(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "business_id" }
+      );
     }
 
     return NextResponse.json({ ok: true });
@@ -84,6 +111,15 @@ export async function POST(req: NextRequest) {
         .from("products")
         .delete()
         .eq("id", body.productId);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === "update_subscription_status") {
+      const { error } = await admin
+        .from("subscription_requests")
+        .update({ status: body.status })
+        .eq("id", body.requestId);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       return NextResponse.json({ ok: true });
     }

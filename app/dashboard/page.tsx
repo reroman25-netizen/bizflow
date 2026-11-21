@@ -11,7 +11,8 @@ import {
   ShoppingBag,
   Users,
   QrCode,
-  Bot,
+  Sparkles,
+  CreditCard,
   Plus,
   Trash2,
   ExternalLink,
@@ -27,26 +28,41 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, Product, Order, ClientRecord, OrderStatus } from "@/lib/types";
 import { formatKZT, formatDate, slugify } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
+import { BUSINESS_CATEGORIES } from "@/lib/categories";
 import { BrandLogo } from "@/components/BrandLogo";
+import { TiyinAiCenter } from "@/components/TiyinAiCenter";
 
-type TabId = "company" | "catalog" | "contacts" | "orders" | "clients" | "share" | "ai";
+type TabId =
+  | "company"
+  | "catalog"
+  | "payments"
+  | "contacts"
+  | "orders"
+  | "clients"
+  | "share"
+  | "ai";
+
+const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
+  web: { label: "Витрина", className: "bg-slate-100 text-slate-700" },
+  whatsapp: { label: "WhatsApp", className: "bg-emerald-50 text-emerald-700" },
+  instagram: { label: "Instagram", className: "bg-pink-50 text-pink-700" },
+  telegram: { label: "Telegram", className: "bg-sky-50 text-sky-700" },
+};
 
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string>("");
   const [accessDenied, setAccessDenied] = useState(false);
 
   const [business, setBusiness] = useState<Business | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [clients, setClients] = useState<ClientRecord[]>([]);
-  const [aiStatus, setAiStatus] = useState<{ ai_enabled: boolean; status_label: string }>({
-    ai_enabled: true,
-    status_label: "Настраивается администратором",
-  });
 
   const [activeTab, setActiveTab] = useState<TabId>("company");
+  const [orderSourceFilter, setOrderSourceFilter] = useState<string>("all");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [origin, setOrigin] = useState("https://tiyin.kz");
   const [copied, setCopied] = useState(false);
@@ -56,6 +72,7 @@ export default function DashboardPage() {
   const [createName, setCreateName] = useState("");
   const [createSlug, setCreateSlug] = useState("");
   const [createCity, setCreateCity] = useState("Алматы");
+  const [createCategory, setCreateCategory] = useState(BUSINESS_CATEGORIES[0]);
   const [createTagline, setCreateTagline] = useState("");
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -80,13 +97,16 @@ export default function DashboardPage() {
       return;
     }
 
-    const typedBiz = {
+    const typedBiz: Business = {
       ...(biz as Business),
       city: (biz as Business).city || "Алматы",
+      category: (biz as Business).category || BUSINESS_CATEGORIES[0],
+      kaspi_pay_link: (biz as Business).kaspi_pay_link || "",
+      halyk_enabled: Boolean((biz as Business).halyk_enabled),
     };
     setBusiness(typedBiz);
 
-    const [prodRes, ordRes, cliRes, aiRes] = await Promise.all([
+    const [prodRes, ordRes, cliRes] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -102,21 +122,11 @@ export default function DashboardPage() {
         .select("*")
         .eq("business_id", typedBiz.id)
         .order("last_order_at", { ascending: false }),
-      fetch(`/api/ai-status?businessId=${typedBiz.id}`),
     ]);
 
     setProducts((prodRes.data as Product[]) || []);
     setOrders((ordRes.data as Order[]) || []);
     setClients((cliRes.data as ClientRecord[]) || []);
-
-    if (aiRes.ok) {
-      const aiJson = await aiRes.json();
-      setAiStatus({
-        ai_enabled: Boolean(aiJson.ai_enabled),
-        status_label: aiJson.status_label || "Настраивается администратором",
-      });
-    }
-
     setLoading(false);
   }, []);
 
@@ -128,9 +138,10 @@ export default function DashboardPage() {
     const init = async () => {
       const supabase = getSupabaseClient();
       const { data } = await supabase.auth.getSession();
-      const user = data.session?.user;
+      const session = data.session;
+      const user = session?.user;
 
-      if (!user) {
+      if (!user || !session) {
         router.replace("/auth?mode=business&tab=login");
         return;
       }
@@ -148,6 +159,7 @@ export default function DashboardPage() {
       }
 
       setUserId(user.id);
+      setAccessToken(session.access_token);
       await loadBusinessData(user.id);
     };
 
@@ -174,6 +186,7 @@ export default function DashboardPage() {
       name: createName.trim(),
       slug: finalSlug,
       city: createCity,
+      category: createCategory,
       tagline: createTagline.trim(),
     });
 
@@ -200,6 +213,7 @@ export default function DashboardPage() {
       .update({
         name: business.name,
         city: business.city,
+        category: business.category || BUSINESS_CATEGORIES[0],
         tagline: business.tagline,
         services_description: business.services_description,
         address: business.address,
@@ -207,6 +221,8 @@ export default function DashboardPage() {
         phone: business.phone,
         whatsapp: business.whatsapp,
         telegram: business.telegram,
+        kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
+        halyk_enabled: Boolean(business.halyk_enabled),
       })
       .eq("id", business.id);
 
@@ -321,7 +337,7 @@ export default function DashboardPage() {
     );
   }
 
-  // Первый вход владельца бизнеса — создание платформы с выбором города
+  // Первый вход владельца бизнеса — создание платформы с выбором города и сферы деятельности
   if (!business) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-[#FAFAFB]">
@@ -333,7 +349,7 @@ export default function DashboardPage() {
             Запустите платформу вашего бизнеса
           </h1>
           <p className="text-sm text-slate-500 mb-6">
-            Укажите название, город и короткую ссылку — ваша витрина и QR-код
+            Укажите название, сферу деятельности и город — ваша витрина и QR-код
             создадутся сразу.
           </p>
 
@@ -355,21 +371,40 @@ export default function DashboardPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                Город (Казахстан)
-              </label>
-              <select
-                value={createCity}
-                onChange={(e) => setCreateCity(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
-              >
-                {KZ_CITIES.map((city) => (
-                  <option key={city} value={city}>
-                    {city}
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Сфера деятельности
+                </label>
+                <select
+                  value={createCategory}
+                  onChange={(e) => setCreateCategory(e.target.value)}
+                  className="w-full px-3.5 py-3 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                >
+                  {BUSINESS_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Город (Казахстан)
+                </label>
+                <select
+                  value={createCity}
+                  onChange={(e) => setCreateCity(e.target.value)}
+                  className="w-full px-3.5 py-3 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                >
+                  {KZ_CITIES.map((city) => (
+                    <option key={city} value={city}>
+                      {city}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>
@@ -425,20 +460,31 @@ export default function DashboardPage() {
 
   const publicUrl = `${origin}/${business.slug}`;
   const newOrdersCount = orders.filter((o) => o.status === "new").length;
+  const filteredOrders =
+    orderSourceFilter === "all"
+      ? orders
+      : orders.filter((o) => (o.source || "web") === orderSourceFilter);
 
-  const navItems: { id: TabId; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: "company", label: "О компании и услугах", icon: <Building2 className="w-4 h-4" /> },
-    { id: "catalog", label: "Каталог товаров", icon: <Package className="w-4 h-4" /> },
-    { id: "contacts", label: "Контакты", icon: <Phone className="w-4 h-4" /> },
+  const navItems: {
+    id: TabId;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+    accent?: boolean;
+  }[] = [
+    { id: "ai", label: "TIYIN AI", icon: <Sparkles className="w-4 h-4" />, accent: true },
     {
       id: "orders",
       label: "Заказы",
       icon: <ShoppingBag className="w-4 h-4" />,
       badge: newOrdersCount > 0 ? newOrdersCount : undefined,
     },
+    { id: "catalog", label: "Каталог товаров", icon: <Package className="w-4 h-4" /> },
+    { id: "payments", label: "Оплата", icon: <CreditCard className="w-4 h-4" /> },
+    { id: "company", label: "О компании", icon: <Building2 className="w-4 h-4" /> },
+    { id: "contacts", label: "Контакты", icon: <Phone className="w-4 h-4" /> },
     { id: "clients", label: "База клиентов", icon: <Users className="w-4 h-4" /> },
     { id: "share", label: "Ссылка и QR", icon: <QrCode className="w-4 h-4" /> },
-    { id: "ai", label: "ИИ-агент", icon: <Bot className="w-4 h-4" /> },
   ];
 
   return (
@@ -466,7 +512,7 @@ export default function DashboardPage() {
       <aside
         className={`${
           mobileMenuOpen ? "block" : "hidden"
-        } md:flex md:flex-col w-full md:w-64 bg-white border-r border-slate-200 md:min-h-screen p-4 justify-between`}
+        } md:flex md:flex-col w-full md:w-64 bg-white border-r border-slate-200 md:min-h-screen p-4 justify-between shrink-0`}
       >
         <div>
           <div className="hidden md:block px-2 py-2 mb-5">
@@ -477,7 +523,10 @@ export default function DashboardPage() {
               <div className="font-semibold text-sm text-neutral-950 truncate">
                 {business.name}
               </div>
-              <div className="text-xs text-slate-500 truncate mt-0.5">
+              <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                {business.category}
+              </div>
+              <div className="text-[11px] text-slate-400 truncate mt-0.5">
                 {business.city} • /{business.slug}
               </div>
             </div>
@@ -494,6 +543,8 @@ export default function DashboardPage() {
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition ${
                   activeTab === item.id
                     ? "bg-neutral-950 text-white"
+                    : item.accent
+                    ? "bg-blue-50/70 text-blue-700 hover:bg-blue-100/70 font-semibold"
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
@@ -531,16 +582,25 @@ export default function DashboardPage() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 sm:p-8 max-w-4xl w-full mx-auto">
+      <main className="flex-1 p-4 sm:p-8 max-w-5xl w-full mx-auto">
         {saveNotice && (
           <div className="mb-5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-xl">
             {saveNotice}
           </div>
         )}
 
+        {/* TAB: TIYIN AI */}
+        {activeTab === "ai" && (
+          <TiyinAiCenter
+            accessToken={accessToken}
+            business={business}
+            orders={orders}
+          />
+        )}
+
         {/* TAB: COMPANY */}
         {activeTab === "company" && (
-          <form onSubmit={handleSaveBusiness} className="space-y-5">
+          <form onSubmit={handleSaveBusiness} className="space-y-5 max-w-3xl">
             <div>
               <h1 className="text-2xl font-bold text-neutral-950">О компании и услугах</h1>
               <p className="text-sm text-slate-500">
@@ -564,6 +624,25 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Сфера деятельности
+                  </label>
+                  <select
+                    value={business.category || BUSINESS_CATEGORIES[0]}
+                    onChange={(e) => setBusiness({ ...business, category: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    {BUSINESS_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
                     Город
                   </label>
                   <select
@@ -578,19 +657,18 @@ export default function DashboardPage() {
                     ))}
                   </select>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Краткий слоган (виден в поиске)
-                </label>
-                <input
-                  type="text"
-                  value={business.tagline}
-                  onChange={(e) => setBusiness({ ...business, tagline: e.target.value })}
-                  placeholder="Например: Авторские букеты и подарки с доставкой"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
-                />
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Краткий слоган (виден в поиске)
+                  </label>
+                  <input
+                    type="text"
+                    value={business.tagline}
+                    onChange={(e) => setBusiness({ ...business, tagline: e.target.value })}
+                    placeholder="Например: Авторские букеты и подарки с доставкой"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
               </div>
 
               <div>
@@ -648,13 +726,113 @@ export default function DashboardPage() {
           </form>
         )}
 
+        {/* TAB: PAYMENTS (KASPI & HALYK) */}
+        {activeTab === "payments" && (
+          <form onSubmit={handleSaveBusiness} className="space-y-5 max-w-2xl">
+            <div>
+              <h1 className="text-2xl font-bold text-neutral-950">Подключение оплаты</h1>
+              <p className="text-sm text-slate-500">
+                Настройте способы оплаты — аккуратные значки банков автоматически появятся в
+                шапке вашей витрины и в корзине клиента
+              </p>
+            </div>
+
+            {/* Kaspi Pay Block */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-xl bg-[#F14635] text-white font-extrabold text-sm flex items-center justify-center">
+                    K
+                  </span>
+                  <div>
+                    <div className="font-bold text-neutral-950">Kaspi Pay (ссылка на QR)</div>
+                    <div className="text-xs text-slate-500">
+                      Клиент переходит прямо в приложение Kaspi.kz для оплаты заказа
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                    business.kaspi_pay_link?.trim()
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {business.kaspi_pay_link?.trim() ? "Подключен" : "Не указана"}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Ссылка на ваш Kaspi Pay QR
+                </label>
+                <input
+                  type="url"
+                  value={business.kaspi_pay_link || ""}
+                  onChange={(e) =>
+                    setBusiness({ ...business, kaspi_pay_link: e.target.value })
+                  }
+                  placeholder="https://pay.kaspi.kz/pay/..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                />
+                <p className="text-[11px] text-slate-400 mt-1.5">
+                  Откройте приложение <strong>Kaspi Pay</strong> → «Мой QR» → «Поделиться
+                  ссылкой» и вставьте её сюда. Если поле пустое, значок Kaspi на витрине не
+                  показывается.
+                </p>
+              </div>
+            </div>
+
+            {/* Halyk Bank Block */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-xl bg-[#00805F] text-white font-extrabold text-sm flex items-center justify-center">
+                    H
+                  </span>
+                  <div>
+                    <div className="font-bold text-neutral-950">Halyk Bank / ePay</div>
+                    <div className="text-xs text-slate-500">
+                      Прием оплаты через Halyk QR и карты (автоматический API ePay скоро)
+                    </div>
+                  </div>
+                </div>
+
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(business.halyk_enabled)}
+                    onChange={(e) =>
+                      setBusiness({ ...business, halyk_enabled: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded border-slate-300 accent-neutral-950"
+                  />
+                  <span className="text-xs font-semibold text-neutral-800">Включить</span>
+                </label>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                При включении значок Halyk появится на вашей витрине и в списке способов
+                оплаты при оформлении заказа.
+              </p>
+            </div>
+
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
+            >
+              <Save className="w-4 h-4" />
+              Сохранить способы оплаты
+            </button>
+          </form>
+        )}
+
         {/* TAB: CATALOG */}
         {activeTab === "catalog" && (
           <div className="space-y-6">
             <div>
               <h1 className="text-2xl font-bold text-neutral-950">Каталог товаров и услуг</h1>
               <p className="text-sm text-slate-500">
-                Добавляйте позиции — они сразу появятся на витрине и в ответах ИИ-агента
+                Добавляйте позиции — они сразу появятся на витрине и в ответах TIYIN AI
               </p>
             </div>
 
@@ -812,62 +990,106 @@ export default function DashboardPage() {
           </form>
         )}
 
-        {/* TAB: ORDERS */}
+        {/* TAB: ORDERS (UNIFIED FEED ACROSS ALL CHANNELS) */}
         {activeTab === "orders" && (
           <div className="space-y-4">
-            <h1 className="text-2xl font-bold text-neutral-950">Заказы с витрины</h1>
-            {orders.length === 0 ? (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-neutral-950">Единая лента заказов</h1>
+                <p className="text-sm text-slate-500">
+                  Все заявки с витрины, WhatsApp, Instagram и Telegram в одном окне
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: "all", label: "Все" },
+                  { id: "web", label: "Витрина" },
+                  { id: "whatsapp", label: "WhatsApp" },
+                  { id: "instagram", label: "Instagram" },
+                  { id: "telegram", label: "Telegram" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setOrderSourceFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                      orderSourceFilter === f.id
+                        ? "bg-neutral-950 text-white"
+                        : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filteredOrders.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
-                Заказов пока нет. Поделитесь ссылкой или QR-кодом с клиентами.
+                Заказов в этом разделе пока нет.
               </div>
             ) : (
               <div className="space-y-3">
-                {orders.map((ord) => (
-                  <div
-                    key={ord.id}
-                    className="bg-white p-5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-neutral-950">{ord.order_code}</span>
-                        <span className="text-xs text-slate-400">
-                          {formatDate(ord.created_at)}
-                        </span>
-                      </div>
-                      <div className="text-sm font-medium text-slate-800">
-                        {ord.client_name} • {ord.client_phone}
-                      </div>
-                      {ord.comment && (
-                        <div className="text-xs text-slate-500">
-                          Комментарий / адрес: {ord.comment}
+                {filteredOrders.map((ord) => {
+                  const src = SOURCE_LABELS[ord.source || "web"] || SOURCE_LABELS.web;
+                  return (
+                    <div
+                      key={ord.id}
+                      className="bg-white p-5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-neutral-950">{ord.order_code}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${src.className}`}
+                          >
+                            {src.label}
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            {formatDate(ord.created_at)}
+                          </span>
                         </div>
-                      )}
-                      <div className="text-sm text-slate-700 pt-1">
-                        {Array.isArray(ord.items)
-                          ? ord.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")
-                          : ""}
+                        <div className="text-sm font-medium text-slate-800">
+                          {ord.client_name} • {ord.client_phone}
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                          <span>Оплата: {ord.payment_method || "Уточнить"}</span>
+                          {ord.delivery_method && (
+                            <span>• Получение: {ord.delivery_method}</span>
+                          )}
+                        </div>
+                        {ord.comment && (
+                          <div className="text-xs text-slate-500">
+                            Комментарий / адрес: {ord.comment}
+                          </div>
+                        )}
+                        <div className="text-sm text-slate-700 pt-1">
+                          {Array.isArray(ord.items)
+                            ? ord.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")
+                            : ""}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2">
-                      <div className="text-lg font-bold text-neutral-950">
-                        {formatKZT(ord.total_price)}
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                        <div className="text-lg font-bold text-neutral-950">
+                          {formatKZT(ord.total_price)}
+                        </div>
+                        <select
+                          value={ord.status}
+                          onChange={(e) =>
+                            updateOrderStatus(ord.id, e.target.value as OrderStatus)
+                          }
+                          className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium bg-white"
+                        >
+                          <option value="new">Новый</option>
+                          <option value="in_progress">В работе</option>
+                          <option value="done">Выполнен</option>
+                          <option value="cancelled">Отменен</option>
+                        </select>
                       </div>
-                      <select
-                        value={ord.status}
-                        onChange={(e) =>
-                          updateOrderStatus(ord.id, e.target.value as OrderStatus)
-                        }
-                        className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium bg-white"
-                      >
-                        <option value="new">Новый</option>
-                        <option value="in_progress">В работе</option>
-                        <option value="done">Выполнен</option>
-                        <option value="cancelled">Отменен</option>
-                      </select>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -879,7 +1101,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-2xl font-bold text-neutral-950">База клиентов</h1>
               <p className="text-sm text-slate-500">
-                Формируется автоматически после каждого заказа с вашей витрины
+                Формируется автоматически после каждого заказа с витрины и из TIYIN AI
               </p>
             </div>
             <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto">
@@ -967,51 +1189,6 @@ export default function DashboardPage() {
                 >
                   Распечатать QR-код
                 </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB: AI AGENT (READ-ONLY FOR BUSINESS) */}
-        {activeTab === "ai" && (
-          <div className="space-y-5 max-w-2xl">
-            <div>
-              <h1 className="text-2xl font-bold text-neutral-950">ИИ-агент вашего бизнеса</h1>
-              <p className="text-sm text-slate-500">
-                Автоматически консультирует клиентов на витрине по вашему каталогу 24/7
-              </p>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-neutral-100 text-neutral-900 flex items-center justify-center">
-                    <Bot className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-neutral-950">Статус ИИ-агента</div>
-                    <div className="text-xs text-slate-500">{aiStatus.status_label}</div>
-                  </div>
-                </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                    aiStatus.ai_enabled
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-slate-100 text-slate-600"
-                  }`}
-                >
-                  {aiStatus.ai_enabled ? "Активен" : "На паузе"}
-                </span>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
-                <Lock className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  <strong>Настройка управляется администратором TIYIN Space.</strong> Вам не
-                  нужно прописывать сценарии вручную — просто обновляйте раздел «Каталог
-                  товаров» и «О компании», а наша команда индивидуально настроит и обучит
-                  ИИ-агента под ваш бизнес.
-                </p>
               </div>
             </div>
           </div>
