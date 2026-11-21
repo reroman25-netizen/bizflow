@@ -37,14 +37,12 @@ export default function HomePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Восстанавливаем выбранный город
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem(CITY_STORAGE_KEY);
     if (saved) setSelectedCity(saved);
   }, []);
 
-  // Закрытие компактного слайда городов при клике снаружи
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -99,7 +97,7 @@ export default function HomePage() {
     }
   };
 
-  // Живой поиск с учетом выбранного города
+  // Живой поиск по названию, категории, слогану и описанию с учетом города
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     const trimmed = query.trim();
@@ -119,7 +117,7 @@ export default function HomePage() {
         .select("*")
         .eq("is_active", true)
         .or(
-          `name.ilike.%${safe}%,slug.ilike.%${safe}%,tagline.ilike.%${safe}%,services_description.ilike.%${safe}%`
+          `name.ilike.%${safe}%,slug.ilike.%${safe}%,category.ilike.%${safe}%,tagline.ilike.%${safe}%,services_description.ilike.%${safe}%`
         )
         .limit(12);
 
@@ -222,10 +220,10 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Main Content: Mobile-First (Search first, Phone Demo below on mobile / right on desktop) */}
+      {/* Main Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8 sm:py-14 lg:py-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-start">
-          {/* LEFT COLUMN: Classic Typography + City Selector + Search */}
+          {/* LEFT COLUMN */}
           <div className="lg:col-span-7 lg:pt-6">
             <h1 className="text-[28px] sm:text-4xl lg:text-[46px] font-semibold text-neutral-950 tracking-[-0.025em] leading-[1.15]">
               Прямой доступ к компаниям и сервисам
@@ -239,7 +237,6 @@ export default function HomePage() {
             {/* Unified City + Search Control */}
             <div className="mt-7 relative" ref={cityDropdownRef}>
               <div className="flex flex-col sm:flex-row bg-white rounded-2xl border border-slate-300/90 shadow-[0_8px_30px_rgb(0,0,0,0.05)] focus-within:border-neutral-900 focus-within:ring-4 focus-within:ring-neutral-900/5 transition">
-                {/* City Selector Button */}
                 <button
                   type="button"
                   onClick={() => setCityMenuOpen((prev) => !prev)}
@@ -256,7 +253,6 @@ export default function HomePage() {
                   />
                 </button>
 
-                {/* Search Input */}
                 <div className="relative flex-1 flex items-center">
                   <Search className="w-5 h-5 text-neutral-400 absolute left-4 pointer-events-none" />
                   <input
@@ -269,7 +265,6 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Compact Scrollable City Slide Dropdown */}
               {cityMenuOpen && (
                 <div className="absolute left-0 top-full mt-2 w-full sm:w-64 bg-white rounded-2xl border border-slate-200 shadow-xl z-40 overflow-hidden">
                   <div className="px-3.5 py-2.5 border-b border-slate-100 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -338,8 +333,15 @@ export default function HomePage() {
                           <Store className="w-5 h-5" />
                         </div>
                         <div className="min-w-0">
-                          <div className="font-semibold text-base text-neutral-950 group-hover:text-blue-600 transition truncate">
-                            {b.name}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-base text-neutral-950 group-hover:text-blue-600 transition truncate">
+                              {b.name}
+                            </span>
+                            {b.category && (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-medium">
+                                {b.category}
+                              </span>
+                            )}
                           </div>
                           {b.tagline && (
                             <p className="text-xs sm:text-sm text-slate-500 line-clamp-1 mt-0.5">
@@ -367,7 +369,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Smartphone Demo + Support Links */}
+          {/* RIGHT COLUMN */}
           <div className="lg:col-span-5 flex justify-center lg:justify-end">
             <PhoneDemo />
           </div>
@@ -383,7 +385,7 @@ export default function HomePage() {
             </h2>
             <p className="text-neutral-400 text-sm">
               Создайте платформу своего бизнеса в TIYIN Space: витрина по QR,
-              каталог, база клиентов и ИИ-агент 24/7.
+              каталог, база клиентов и TIYIN AI 24/7.
             </p>
           </div>
           <Link
