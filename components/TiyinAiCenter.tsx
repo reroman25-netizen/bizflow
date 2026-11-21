@@ -18,6 +18,7 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
+  ChevronLeft,
 } from "lucide-react";
 import {
   Business,
@@ -85,6 +86,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
@@ -252,7 +254,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         setSubscriptionRequests((prev) => [json.request, ...prev]);
         setSubComment("");
         showToast(
-          "Заявка отправлена! Менеджер TIYIN Space свяжется с вами для запуска автопилота."
+          "Заявка отправлена! Команда TIYIN Space свяжется с вами для запуска автопилота."
         );
       } else {
         setErrorMsg(json.error || "Ошибка отправки заявки.");
@@ -278,173 +280,183 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
 
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-500">
-        Загрузка центра TIYIN AI...
+      <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-sm text-slate-500">
+        Загрузка TIYIN AI...
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-xl bg-neutral-950 text-white flex items-center justify-center">
-              <Sparkles className="w-4 h-4" />
+    <div className="space-y-5">
+      {/* Slide 4 Dark Hero Card */}
+      <div className="bg-neutral-950 text-white rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="w-11 h-11 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5 text-white" />
             </span>
-            <h1 className="text-2xl font-bold text-neutral-950">TIYIN AI</h1>
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                aiEnabled
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-slate-100 text-slate-500"
-              }`}
-            >
-              {aiEnabled ? "Автопилот активен" : "На паузе"}
-            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight">TIYIN AI</h1>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                    aiEnabled
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                      : "bg-white/10 text-neutral-300"
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      aiEnabled ? "bg-emerald-400 animate-pulse" : "bg-neutral-400"
+                    }`}
+                  />
+                  {aiEnabled ? "Автопилот 24/7" : "На паузе"}
+                </span>
+              </div>
+              <p className="text-xs text-neutral-400 mt-0.5">{statusLabel}</p>
+            </div>
           </div>
-          <p className="text-sm text-slate-500 mt-1">
-            Единый центр управления ИИ-агентами, диалогами и подпиской по каналам
-          </p>
+
+          <button
+            type="button"
+            onClick={() => loadCenter(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-medium text-white transition shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Обновить</span>
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => loadCenter(true)}
-          disabled={refreshing}
-          className="self-start sm:self-auto inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-          Обновить
-        </button>
+        {/* Metrics Row inside Hero */}
+        <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+          <div className="bg-white/[0.06] border border-white/10 rounded-2xl p-3 sm:p-3.5">
+            <div className="text-[11px] text-neutral-400">Оборот заказов</div>
+            <div className="text-sm sm:text-lg font-bold mt-0.5 truncate">
+              {formatKZT(totalRevenue)}
+            </div>
+          </div>
+          <div className="bg-white/[0.06] border border-white/10 rounded-2xl p-3 sm:p-3.5">
+            <div className="text-[11px] text-neutral-400">Диалогов</div>
+            <div className="text-sm sm:text-lg font-bold mt-0.5">{conversations.length}</div>
+          </div>
+          <div className="bg-white/[0.06] border border-white/10 rounded-2xl p-3 sm:p-3.5">
+            <div className="text-[11px] text-neutral-400">Зовут вас</div>
+            <div
+              className={`text-sm sm:text-lg font-bold mt-0.5 ${
+                needsHumanCount > 0 ? "text-amber-300" : "text-emerald-300"
+              }`}
+            >
+              {needsHumanCount}
+            </div>
+          </div>
+        </div>
+
+        {/* Channel Status Pills */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {channelPills.map((ch) => (
+            <span
+              key={ch.key}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border ${
+                ch.active
+                  ? "bg-emerald-500/15 border-emerald-400/30 text-emerald-200"
+                  : "bg-white/[0.04] border-white/10 text-neutral-400"
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  ch.active ? "bg-emerald-400" : "bg-neutral-500"
+                }`}
+              />
+              {ch.label}
+            </span>
+          ))}
+        </div>
       </div>
 
+      {/* Notifications */}
       {notice && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-xl flex items-center gap-2">
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-2xl flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span>{notice}</span>
         </div>
       )}
 
       {errorMsg && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl flex items-center gap-2">
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-2xl flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Top KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Заказы через платформу</div>
-          <div className="text-xl font-bold text-neutral-950 mt-1">
-            {formatKZT(totalRevenue)}
-          </div>
-          <div className="text-xs text-slate-400 mt-0.5">
-            Всего заказов: {nonCancelledOrders.length}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Диалоги агента</div>
-          <div className="text-xl font-bold text-neutral-950 mt-1">
-            {conversations.length}
-          </div>
-          <div className="text-xs text-slate-400 mt-0.5">
-            {needsHumanCount > 0 ? (
-              <span className="text-red-600 font-medium">
-                Требуют менеджера: {needsHumanCount}
-              </span>
-            ) : (
-              "Все обработаны автономно"
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500 mb-2">
-            Статус каналов
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {channelPills.map((ch) => (
-              <span
-                key={ch.key}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${
-                  ch.active
-                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200/70"
-                    : "bg-slate-50 text-slate-400 border border-slate-200/70"
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    ch.active ? "bg-emerald-500" : "bg-slate-300"
-                  }`}
-                />
-                {ch.label}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Sub-navigation inside TIYIN AI */}
-      <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-2xl">
+      {/* Clean Segmented Tabs (Slide 4 style) */}
+      <div className="grid grid-cols-3 gap-1.5 bg-slate-200/70 p-1.5 rounded-2xl">
         <button
           type="button"
           onClick={() => setSubTab("dialogs")}
-          className={`flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition ${
+          className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
             subTab === "dialogs"
               ? "bg-white text-neutral-950 shadow-sm"
               : "text-slate-600 hover:text-neutral-900"
           }`}
         >
-          <MessageSquare className="w-4 h-4" />
-          Диалоги ({conversations.length})
+          <MessageSquare className="w-4 h-4 shrink-0" />
+          <span className="truncate">Диалоги</span>
         </button>
 
         <button
           type="button"
           onClick={() => setSubTab("settings")}
-          className={`flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition ${
+          className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
             subTab === "settings"
               ? "bg-white text-neutral-950 shadow-sm"
               : "text-slate-600 hover:text-neutral-900"
           }`}
         >
-          <Sliders className="w-4 h-4" />
-          Заметки и Telegram
+          <Sliders className="w-4 h-4 shrink-0" />
+          <span className="truncate">Уведомления</span>
         </button>
 
         <button
           type="button"
           onClick={() => setSubTab("subscription")}
-          className={`flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition ${
+          className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
             subTab === "subscription"
               ? "bg-neutral-950 text-white shadow-sm"
               : "text-slate-600 hover:text-neutral-900"
           }`}
         >
-          <Layers className="w-4 h-4" />
-          Подключить каналы
+          <Layers className="w-4 h-4 shrink-0" />
+          <span className="truncate">Каналы</span>
         </button>
       </div>
 
-      {/* SUBTAB 1: DIALOGS */}
+      {/* SUBTAB 1: LIVE DIALOGS WITH 1-CLICK PAUSE */}
       {subTab === "dialogs" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Conversation list */}
-          <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Последние обращения
+          <div
+            className={`${
+              mobileChatOpen ? "hidden lg:block" : "block"
+            } lg:col-span-5 bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-sm`}
+          >
+            <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Живые переписки ({conversations.length})
+              </span>
             </div>
+
             {conversations.length === 0 ? (
-              <div className="p-6 text-center text-sm text-slate-500">
-                Диалогов пока нет. Как только клиент напишет ИИ на витрине или в
-                подключенных мессенджерах, переписка появится здесь.
+              <div className="p-8 text-center text-sm text-slate-500">
+                <Bot className="w-9 h-9 mx-auto mb-2.5 text-slate-300" />
+                <p className="font-medium text-neutral-800">Пока нет диалогов</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Как только клиент напишет в чат на витрине или в мессенджер, переписка
+                  сразу появится здесь.
+                </p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
+              <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
                 {conversations.map((conv) => {
                   const ch = CHANNEL_BADGE[conv.channel] || CHANNEL_BADGE.web;
                   const tg = TAG_BADGE[conv.tag] || TAG_BADGE.consultation;
@@ -453,8 +465,11 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                     <button
                       key={conv.id}
                       type="button"
-                      onClick={() => setSelectedConvId(conv.id)}
-                      className={`w-full text-left p-3.5 transition ${
+                      onClick={() => {
+                        setSelectedConvId(conv.id);
+                        setMobileChatOpen(true);
+                      }}
+                      className={`w-full text-left p-4 transition ${
                         active ? "bg-slate-50" : "hover:bg-slate-50/70"
                       }`}
                     >
@@ -466,6 +481,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                           {formatDate(conv.last_message_at)}
                         </span>
                       </div>
+
                       <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${ch.className}`}
@@ -483,6 +499,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                           </span>
                         )}
                       </div>
+
                       {conv.summary && (
                         <p className="text-xs text-slate-500 line-clamp-1 mt-1.5">
                           {conv.summary}
@@ -496,22 +513,37 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
           </div>
 
           {/* Chat viewer */}
-          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 flex flex-col min-h-[420px] max-h-[540px] overflow-hidden">
+          <div
+            className={`${
+              mobileChatOpen ? "flex" : "hidden lg:flex"
+            } lg:col-span-7 bg-white rounded-3xl border border-slate-200/90 flex-col min-h-[440px] max-h-[560px] overflow-hidden shadow-sm`}
+          >
             {selectedConv ? (
               <>
-                <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50/70">
-                  <div className="min-w-0">
-                    <div className="font-bold text-sm text-neutral-950 truncate">
-                      {selectedConv.client_name || "Гость"}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {selectedConv.client_phone || selectedConv.external_user_id}
+                <div className="px-4 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-slate-50/60">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setMobileChatOpen(false)}
+                      className="lg:hidden p-1.5 -ml-1 rounded-xl hover:bg-slate-200/70 text-neutral-700"
+                      aria-label="Назад к списку"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-neutral-950 truncate">
+                        {selectedConv.client_name || "Гость"}
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {selectedConv.client_phone || selectedConv.external_user_id}
+                      </div>
                     </div>
                   </div>
+
                   <button
                     type="button"
                     onClick={() => handleTogglePause(selectedConv)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition ${
                       selectedConv.ai_paused
                         ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                         : "bg-amber-100 hover:bg-amber-200 text-amber-900"
@@ -549,7 +581,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                         }`}
                       >
                         <div
-                          className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm whitespace-pre-line ${
+                          className={`max-w-[84%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm whitespace-pre-line ${
                             m.sender === "client"
                               ? "bg-white border border-slate-200 text-neutral-900 rounded-bl-sm"
                               : "bg-neutral-950 text-white rounded-br-sm"
@@ -580,72 +612,49 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </div>
       )}
 
-      {/* SUBTAB 2: DAILY NOTES & TELEGRAM NOTIFICATIONS */}
+      {/* SUBTAB 2: DAILY NOTES & TELEGRAM INSTANT ALERTS */}
       {subTab === "settings" && (
-        <form onSubmit={handleSaveSettings} className="space-y-5 max-w-2xl">
-          {/* Status Card (read-only prompt notice) */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-neutral-100 text-neutral-900 flex items-center justify-center">
-                  <Bot className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-semibold text-sm text-neutral-950">
-                    Статус сценария TIYIN AI
-                  </div>
-                  <div className="text-xs text-slate-500">{statusLabel}</div>
-                </div>
-              </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  aiEnabled
-                    ? "bg-emerald-50 text-emerald-700"
-                    : "bg-slate-100 text-slate-500"
-                }`}
-              >
-                {aiEnabled ? "Активен" : "На паузе"}
-              </span>
-            </div>
-            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-slate-600">
+        <form onSubmit={handleSaveSettings} className="space-y-4 max-w-2xl">
+          <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+            <div className="flex items-start gap-2.5 text-xs text-slate-600 bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5">
               <Lock className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
               <span>
-                Базовую логику продаж настраивает команда TIYIN Space. Ниже вы можете
-                задавать быстрые обновления на сегодня и подключить мгновенные заказы в
-                Telegram.
+                Основную логику продаж настраивает команда TIYIN Space. Здесь вы можете
+                вписать быстрые обновления на сегодня — агент учтет их мгновенно.
               </span>
             </div>
-          </div>
 
-          {/* Daily Notes */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3">
-            <label className="block font-semibold text-sm text-neutral-950">
-              Быстрые указания для ИИ на сегодня
-            </label>
-            <p className="text-xs text-slate-500">
-              Агент сразу учтет эту информацию в ответах клиентам (не ломая основной
-              сценарий).
-            </p>
-            <textarea
-              rows={3}
-              value={dailyNotes}
-              onChange={(e) => setDailyNotes(e.target.value)}
-              placeholder="Например: Сегодня скидка 10% на самовывоз. Белые розы закончились, предлагайте тюльпаны. Доставка по Алматы 1 500 ₸."
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
-            />
-          </div>
-
-          {/* Telegram Instant Notifications */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3">
-            <div className="flex items-center gap-2">
-              <Bell className="w-4 h-4 text-sky-600" />
-              <label className="font-semibold text-sm text-neutral-950">
-                Мгновенные заказы в ваш Telegram
+            <div>
+              <label className="block font-semibold text-sm text-neutral-950 mb-1">
+                Быстрые указания для ИИ на сегодня
               </label>
+              <textarea
+                rows={3}
+                value={dailyNotes}
+                onChange={(e) => setDailyNotes(e.target.value)}
+                placeholder="Например: Сегодня скидка 10% на самовывоз. Белые розы закончились, предлагайте тюльпаны."
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+              />
             </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
+                <Bell className="w-4 h-4" />
+              </span>
+              <div>
+                <div className="font-semibold text-sm text-neutral-950">
+                  Мгновенные заказы в Telegram
+                </div>
+                <div className="text-xs text-slate-500">
+                  Все заявки и сигналы «нужен менеджер» приходят за 1 секунду
+                </div>
+              </div>
+            </div>
+
             <p className="text-xs text-slate-500 leading-relaxed">
-              Каждый новый заказ с витрины и из всех соцсетей будет мгновенно приходить
-              вам в Telegram. Чтобы узнать свой <strong>Chat ID</strong>, напишите боту{" "}
+              Напишите боту{" "}
               <a
                 href="https://t.me/userinfobot"
                 target="_blank"
@@ -653,10 +662,11 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                 className="text-sky-600 font-semibold underline"
               >
                 @userinfobot
-              </a>{" "}
-              и вставьте полученное число ниже (и не забудьте нажать /start в боте
-              уведомлений TIYIN Space).
+              </a>
+              , скопируйте свой <strong>Chat ID</strong> и вставьте ниже (и нажмите /start
+              в боте уведомлений TIYIN Space).
             </p>
+
             <input
               type="text"
               value={channels.owner_telegram_chat_id || ""}
@@ -664,14 +674,14 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                 setChannels({ ...channels, owner_telegram_chat_id: e.target.value })
               }
               placeholder="Например: 512345678"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+              className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
             />
           </div>
 
           <button
             type="submit"
             disabled={savingSettings}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-sm font-semibold transition"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-sm font-semibold transition"
           >
             <Save className="w-4 h-4" />
             {savingSettings ? "Сохраняем..." : "Сохранить настройки TIYIN AI"}
@@ -679,22 +689,21 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </form>
       )}
 
-      {/* SUBTAB 3: MODULAR SUBSCRIPTION CONSTRUCTOR */}
+      {/* SUBTAB 3: SLIDE 4 MODULAR SUBSCRIPTION CONSTRUCTOR */}
       {subTab === "subscription" && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 space-y-5">
+        <div className="space-y-5">
+          <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-sm space-y-5">
             <div>
               <h2 className="text-lg font-bold text-neutral-950">
                 Конструктор подписки TIYIN AI
               </h2>
               <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Кабинет и витрина TIYIN Space всегда бесплатны. Выберите только те каналы,
-                где нужен ИИ-автопилот — мы настроим и подключим их под ключ. При выборе
-                всех каналов действует скидка {ALL_IN_DISCOUNT_PERCENT}%.
+                Кабинет и витрина TIYIN Space бесплатны навсегда. Выберите только те
+                площадки, где нужен автопилот — при выборе всех модулей действует скидка{" "}
+                {ALL_IN_DISCOUNT_PERCENT}%.
               </p>
             </div>
 
-            {/* Module Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {SUBSCRIPTION_MODULES.map((mod) => {
                 const checked = selectedModules.includes(mod.id);
@@ -711,7 +720,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                     onClick={() => toggleModule(mod.id)}
                     className={`text-left p-4 rounded-2xl border-2 transition ${
                       checked
-                        ? "border-neutral-950 bg-neutral-50/70"
+                        ? "border-neutral-950 bg-neutral-50/80 shadow-sm"
                         : "border-slate-200 bg-white hover:border-slate-300"
                     }`}
                   >
@@ -722,12 +731,12 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                         </div>
                         {alreadyActive && (
                           <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">
-                            Уже активен
+                            Подключен
                           </span>
                         )}
                       </div>
                       <span
-                        className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 border ${
+                        className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 border transition ${
                           checked
                             ? "bg-neutral-950 border-neutral-950 text-white"
                             : "border-slate-300 bg-white"
@@ -755,19 +764,18 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
               })}
             </div>
 
-            {/* Summary & Request Form */}
+            {/* Dark Checkout Summary Card */}
             <form
               onSubmit={handleSubmitSubscription}
               className="bg-neutral-950 text-white rounded-2xl p-5 space-y-4"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <div className="text-xs text-neutral-400">
-                    Выбрано модулей: {calc.modules.length} • Срок поэтапного запуска: до{" "}
-                    {calc.estimatedDays}{" "}
-                    {calc.estimatedDays === 1 ? "дня" : "дней"}
+                    Выбрано модулей: {calc.modules.length} • Поэтапный запуск до{" "}
+                    {calc.estimatedDays} {calc.estimatedDays === 1 ? "дня" : "дней"}
                   </div>
-                  <div className="flex items-baseline gap-2.5 mt-1">
+                  <div className="flex flex-wrap items-baseline gap-2.5 mt-1">
                     <span className="text-2xl font-bold">
                       {formatKZT(calc.finalPrice)} / мес
                     </span>
@@ -785,8 +793,8 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                   type="tel"
                   value={subContactPhone}
                   onChange={(e) => setSubContactPhone(e.target.value)}
-                  placeholder="Ваш WhatsApp / телефон для связи"
-                  className="px-3.5 py-2.5 rounded-xl bg-neutral-900 border border-neutral-700 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white"
+                  placeholder="Ваш WhatsApp / телефон"
+                  className="px-3.5 py-2.5 rounded-xl bg-white/10 border border-white/15 text-sm text-white placeholder:text-neutral-400 focus:outline-none focus:border-white"
                   required
                 />
                 <input
@@ -794,7 +802,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                   value={subComment}
                   onChange={(e) => setSubComment(e.target.value)}
                   placeholder="Комментарий (необязательно)"
-                  className="px-3.5 py-2.5 rounded-xl bg-neutral-900 border border-neutral-700 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white"
+                  className="px-3.5 py-2.5 rounded-xl bg-white/10 border border-white/15 text-sm text-white placeholder:text-neutral-400 focus:outline-none focus:border-white"
                 />
               </div>
 
@@ -809,10 +817,9 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
             </form>
           </div>
 
-          {/* Request History */}
           {subscriptionRequests.length > 0 && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
-              <h3 className="font-bold text-sm text-neutral-950">Ваши заявки на TIYIN AI</h3>
+            <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-3">
+              <h3 className="font-bold text-sm text-neutral-950">История заявок</h3>
               <div className="divide-y divide-slate-100">
                 {subscriptionRequests.map((req) => {
                   const st = REQ_STATUS_LABEL[req.status] || REQ_STATUS_LABEL.new;
