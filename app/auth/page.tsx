@@ -3,7 +3,7 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Building2, User, ArrowLeft, Mail, Lock } from "lucide-react";
+import { Building2, User, ArrowLeft, Mail, Lock, CheckCircle2 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { BrandLogo } from "@/components/BrandLogo";
 
@@ -168,11 +168,25 @@ function AuthForm() {
                 : "Регистрация клиента"
               : "Вход в TIYIN Space"}
           </h1>
-          <p className="text-sm text-slate-500 mb-6">
+          <p className="text-sm text-slate-500 mb-5">
             {roleMode === "business"
               ? "После входа по почте откроется ваш личный кабинет и витрина."
               : "Регистрация для клиентов не обязательна — вы всегда можете заказывать без входа."}
           </p>
+
+          {roleMode === "business" && authTab === "register" && (
+            <div className="mb-5 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-xs text-emerald-950 space-y-1.5">
+              <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>6 месяцев бесплатно · далее 990 ₸/мес</span>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                <strong>0% комиссии с ваших продаж</strong> — мы не берем процент с заказов.
+                Витрина, база клиентов и брендированное приложение на экран телефона с вашим
+                логотипом доступны сразу после регистрации.
+              </p>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {authTab === "register" && (

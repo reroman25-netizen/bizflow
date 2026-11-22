@@ -46,6 +46,12 @@ import { formatKZT, formatDate, slugify } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
 import { BUSINESS_CATEGORIES } from "@/lib/categories";
 import { uploadBusinessMedia } from "@/lib/uploadMedia";
+import {
+  getBillingStatus,
+  BASE_PLAN_MONTHLY_PRICE,
+  BASE_PLAN_TRIAL_MONTHS,
+  AI_AUTOPILOT_MONTHLY_PRICE,
+} from "@/lib/subscriptionPlans";
 import { BrandLogo } from "@/components/BrandLogo";
 import { TiyinAiCenter } from "@/components/TiyinAiCenter";
 import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
@@ -133,6 +139,10 @@ export default function DashboardPage() {
       cover_url: (biz as Business).cover_url || "",
       logo_url: (biz as Business).logo_url || "",
       pwa_enabled: (biz as Business).pwa_enabled ?? true,
+      plan_tier: (biz as Business).plan_tier || "base",
+      trial_ends_at: (biz as Business).trial_ends_at || null,
+      paid_until: (biz as Business).paid_until || null,
+      billing_note: (biz as Business).billing_note || "",
       kaspi_pay_link: (biz as Business).kaspi_pay_link || "",
       halyk_enabled: Boolean((biz as Business).halyk_enabled),
     };
@@ -520,10 +530,20 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-neutral-950 mb-1">
             Запустите платформу вашего бизнеса
           </h1>
-          <p className="text-sm text-slate-500 mb-6">
-            Укажите название, сферу деятельности и город — ваша витрина и QR-код
-            создадутся сразу.
+          <p className="text-sm text-slate-500 mb-4">
+            Укажите название, сферу деятельности и город — ваша витрина, QR-код и
+            брендированное приложение создадутся сразу.
           </p>
+
+          <div className="mb-5 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-xs text-emerald-950 space-y-1">
+            <div className="font-bold text-emerald-900">
+              {BASE_PLAN_TRIAL_MONTHS} месяцев бесплатно · далее {formatKZT(BASE_PLAN_MONTHLY_PRICE)}/мес · 0% с продаж
+            </div>
+            <p className="text-[11px] text-emerald-800 leading-relaxed">
+              Мы не берем процент с ваших продаж. Приложение на главный экран телефона с
+              вашим логотипом доступно клиентам сразу.
+            </p>
+          </div>
 
           <form onSubmit={handleCreateBusiness} className="space-y-4">
             <div>
@@ -631,6 +651,12 @@ export default function DashboardPage() {
   }
 
   const publicUrl = `${origin}/${business.slug}`;
+  const billingInfo = getBillingStatus(business);
+  const formattedActiveUntil = billingInfo.activeUntil.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
   const activeOrders = orders.filter(
     (o) => o.status === "new" || o.status === "in_progress"
   );
@@ -843,6 +869,40 @@ export default function DashboardPage() {
         {/* TAB 1: HOME */}
         {activeTab === "home" && (
           <div className="space-y-5">
+            {(billingInfo.status === "expiring_soon" ||
+              billingInfo.status === "grace" ||
+              billingInfo.status === "overdue") && (
+              <div
+                className={`rounded-3xl p-4 sm:p-5 border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  billingInfo.status === "overdue"
+                    ? "bg-red-50 border-red-200 text-red-950"
+                    : "bg-amber-50 border-amber-200 text-amber-950"
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="font-bold text-sm">
+                    {billingInfo.status === "expiring_soon"
+                      ? `Бесплатный период заканчивается ${formattedActiveUntil} (осталось ${Math.max(
+                          0,
+                          billingInfo.daysLeft
+                        )} дн.)`
+                      : `Срок действия тарифа истек ${formattedActiveUntil}`}
+                  </div>
+                  <p className="text-xs opacity-85">
+                    Продлите кабинет за {formatKZT(BASE_PLAN_MONTHLY_PRICE)}/мес (или
+                    выгодно сразу за год) — мы по-прежнему берем 0% комиссии с ваших продаж.
+                  </p>
+                </div>
+                <a
+                  href="https://t.me/tiyinkz"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-neutral-950 text-white text-xs font-semibold shrink-0 hover:bg-neutral-800 transition"
+                >
+                  Продлить в Telegram
+                </a>
+              </div>
+            )}
             <div className="bg-neutral-950 text-white rounded-3xl p-5 sm:p-6 shadow-md space-y-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1481,6 +1541,73 @@ export default function DashboardPage() {
                   <p className="text-xs sm:text-sm text-slate-500">
                     {business.name} • {business.city}
                   </p>
+                </div>
+
+                {/* Billing & Subscription Status Card */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Ваш тариф
+                      </div>
+                      <div className="font-bold text-base text-neutral-950 mt-0.5">
+                        {business.plan_tier === "ai_autopilot"
+                          ? `TIYIN AI Автопилот (${formatKZT(AI_AUTOPILOT_MONTHLY_PRICE)}/мес)`
+                          : `Базовый кабинет (0% с продаж)`}
+                      </div>
+                    </div>
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        billingInfo.status === "overdue"
+                          ? "bg-red-50 text-red-700"
+                          : billingInfo.status === "grace" ||
+                            billingInfo.status === "expiring_soon"
+                          ? "bg-amber-50 text-amber-800"
+                          : "bg-emerald-50 text-emerald-700"
+                      }`}
+                    >
+                      {billingInfo.label}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div className="rounded-2xl bg-slate-50 p-3">
+                      <div className="text-slate-400">Пользуетесь</div>
+                      <div className="font-bold text-neutral-950 mt-0.5">
+                        {billingInfo.daysUsed} дн.
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-3">
+                      <div className="text-slate-400">
+                        {billingInfo.isPaid ? "Оплачено до" : "Бесплатно до"}
+                      </div>
+                      <div className="font-bold text-neutral-950 mt-0.5">
+                        {formattedActiveUntil}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-3 col-span-2 sm:col-span-1">
+                      <div className="text-slate-400">Осталось</div>
+                      <div className="font-bold text-neutral-950 mt-0.5">
+                        {billingInfo.daysLeft >= 0
+                          ? `${billingInfo.daysLeft} дн.`
+                          : `Просрочено ${Math.abs(billingInfo.daysLeft)} дн.`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-slate-500">
+                    <span>
+                      После 6 мес: <strong>{formatKZT(BASE_PLAN_MONTHLY_PRICE)}/мес</strong>{" "}
+                      • Приложение (PWA) включено сразу
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("ai")}
+                      className="font-semibold text-blue-600 hover:underline"
+                    >
+                      Подключить TIYIN AI →
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm divide-y divide-slate-100 overflow-hidden">

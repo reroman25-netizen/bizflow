@@ -29,6 +29,10 @@ export interface Business {
   cover_url?: string;
   logo_url?: string;
   pwa_enabled?: boolean;
+  plan_tier?: "base" | "ai_autopilot";
+  trial_ends_at?: string | null;
+  paid_until?: string | null;
+  billing_note?: string;
   kaspi_pay_link?: string;
   halyk_enabled?: boolean;
   is_active: boolean;
@@ -142,5 +146,16 @@ export interface SubscriptionRequest {
   contact_phone: string;
   comment: string;
   status: "new" | "in_progress" | "active" | "rejected";
+  created_at: string;
+}
+
+export interface BillingPayment {
+  id: string;
+  business_id: string;
+  amount: number;
+  months: number;
+  plan_tier: "base" | "ai_autopilot" | string;
+  paid_at: string;
+  comment: string;
   created_at: string;
 }
