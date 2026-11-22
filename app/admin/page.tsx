@@ -16,6 +16,9 @@ import {
   Lock,
   Layers,
   Inbox,
+  CreditCard,
+  Bell,
+  Clock,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
@@ -28,6 +31,13 @@ import {
 import { formatDate, formatKZT } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
 import { BUSINESS_CATEGORIES } from "@/lib/categories";
+import {
+  getBillingStatus,
+  BASE_PLAN_MONTHLY_PRICE,
+  AI_AUTOPILOT_MONTHLY_PRICE,
+} from "@/lib/subscriptionPlans";
+
+const BASE_PLAN_YEARLY_PRICE = 9900;
 
 interface AdminBusinessBundle {
   business: Business;
@@ -46,12 +56,16 @@ export default function AdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
-  const [adminView, setAdminView] = useState<"businesses" | "requests">("businesses");
+  const [adminView, setAdminView] = useState<"businesses" | "billing" | "requests">(
+    "businesses"
+  );
 
   const [bundles, setBundles] = useState<AdminBusinessBundle[]>([]);
   const [requests, setRequests] = useState<AdminSubscriptionReq[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [extendingId, setExtendingId] = useState<string | null>(null);
+  const [runningReminders, setRunningReminders] = useState(false);
 
   const [prodName, setProdName] = useState("");
   const [prodPrice, setProdPrice] = useState("");
@@ -101,6 +115,11 @@ export default function AdminPage() {
     );
   };
 
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(""), 3500);
+  };
+
   const handleSaveBusinessAndAi = async () => {
     if (!current || !token) return;
     const res = await fetch("/api/admin/business", {
@@ -116,8 +135,80 @@ export default function AdminPage() {
       }),
     });
     if (res.ok) {
-      setNotice("Данные бизнеса, настройки TIYIN AI и каналы сохранены.");
-      setTimeout(() => setNotice(""), 3000);
+      showNotice("Данные бизнеса, настройки TIYIN AI и каналы сохранены.");
+    }
+  };
+
+  const handleExtendBilling = async (params: {
+    businessId: string;
+    businessName: string;
+    months: number;
+    amount: number;
+    planTier: "base" | "ai_autopilot";
+    comment: string;
+  }) => {
+    if (!token) return;
+    setExtendingId(params.businessId);
+    try {
+      const res = await fetch("/api/admin/business", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: "extend_billing",
+          businessId: params.businessId,
+          months: params.months,
+          amount: params.amount,
+          planTier: params.planTier,
+          comment: params.comment,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.business) {
+        setBundles((prev) =>
+          prev.map((item) =>
+            item.business.id === params.businessId
+              ? { ...item, business: { ...item.business, ...json.business } }
+              : item
+          )
+        );
+        showNotice(
+          `Оплата для «${params.businessName}» отмечена (${params.comment}).`
+        );
+      } else {
+        showNotice(json.error || "Ошибка при продлении срока.");
+      }
+    } finally {
+      setExtendingId(null);
+    }
+  };
+
+  const handleRunBillingReminders = async () => {
+    if (!token) return;
+    setRunningReminders(true);
+    try {
+      const res = await fetch("/api/admin/business", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: "run_billing_reminders" }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        showNotice(
+          `Проверено компаний: ${json.checked}. Уведомлено владельцев: ${json.notifiedOwners}. Сводка админу: ${
+            json.adminNotified ? "отправлена" : "нет истекающих в ближайшие 14 дн."
+          }.`
+        );
+      } else {
+        showNotice(json.error || "Не удалось выполнить проверку сроков.");
+      }
+    } finally {
+      setRunningReminders(false);
     }
   };
 
@@ -194,8 +285,7 @@ export default function AdminPage() {
       setRequests((prev) =>
         prev.map((r) => (r.id === requestId ? { ...r, status } : r))
       );
-      setNotice("Статус заявки обновлен.");
-      setTimeout(() => setNotice(""), 2500);
+      showNotice("Статус заявки обновлен.");
     }
   };
 
@@ -227,19 +317,39 @@ export default function AdminPage() {
 
   const newReqCount = requests.filter((r) => r.status === "new").length;
 
+  const billingRows = bundles
+    .map((b) => ({
+      bundle: b,
+      info: getBillingStatus(b.business),
+    }))
+    .sort((a, b) => a.info.daysLeft - b.info.daysLeft);
+
+  const attentionCount = billingRows.filter(
+    (r) =>
+      r.info.status === "expiring_soon" ||
+      r.info.status === "grace" ||
+      r.info.status === "overdue"
+  ).length;
+  const trialCount = billingRows.filter((r) => !r.info.isPaid).length;
+  const aiTierCount = billingRows.filter(
+    (r) => r.bundle.business.plan_tier === "ai_autopilot"
+  ).length;
+
   return (
     <div className="min-h-screen bg-[#FAFAFB]">
       <header className="bg-neutral-950 text-white px-4 h-16 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Shield className="w-5 h-5 text-purple-400" />
-          <span className="font-bold text-sm sm:text-base">Супер-админка TIYIN Space</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <Shield className="w-5 h-5 text-purple-400 shrink-0" />
+          <span className="font-bold text-sm sm:text-base truncate">
+            Супер-админка TIYIN Space
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setAdminView("businesses")}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+            className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
               adminView === "businesses"
                 ? "bg-white text-neutral-950"
                 : "text-neutral-300 hover:bg-neutral-800"
@@ -249,15 +359,32 @@ export default function AdminPage() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminView("billing")}
+            className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+              adminView === "billing"
+                ? "bg-white text-neutral-950"
+                : "text-neutral-300 hover:bg-neutral-800"
+            }`}
+          >
+            <CreditCard className="w-3.5 h-3.5" />
+            <span>Биллинг</span>
+            {attentionCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-neutral-950 text-[10px] font-bold">
+                {attentionCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminView("requests")}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
               adminView === "requests"
                 ? "bg-white text-neutral-950"
                 : "text-neutral-300 hover:bg-neutral-800"
             }`}
           >
             <Inbox className="w-3.5 h-3.5" />
-            Заявки
+            <span className="hidden sm:inline">Заявки</span>
             {newReqCount > 0 && (
               <span className="px-1.5 py-0.5 rounded-full bg-purple-600 text-white text-[10px]">
                 {newReqCount}
@@ -266,7 +393,7 @@ export default function AdminPage() {
           </button>
           <Link
             href="/"
-            className="inline-flex items-center gap-1 text-xs text-neutral-300 hover:text-white ml-2"
+            className="inline-flex items-center gap-1 text-xs text-neutral-300 hover:text-white ml-1"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">На сайт</span>
@@ -281,6 +408,212 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* VIEW: BILLING & TRIALS */}
+        {adminView === "billing" && (
+          <div className="space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-neutral-950">
+                  Биллинг и учет сроков (6 мес. бесплатно → 990 ₸/мес)
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+                  Сортировка по срочности: сверху компании, которым скоро выставлять счет.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRunBillingReminders}
+                disabled={runningReminders}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-xs font-semibold transition shrink-0"
+              >
+                <Bell className="w-4 h-4" />
+                {runningReminders
+                  ? "Проверяем..."
+                  : "Отправить напоминания в Telegram"}
+              </button>
+            </div>
+
+            {/* Summary KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-white p-4 rounded-2xl border border-slate-200">
+                <div className="text-xs text-slate-500">Всего компаний</div>
+                <div className="text-2xl font-extrabold text-neutral-950 mt-1">
+                  {bundles.length}
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-2xl border border-slate-200">
+                <div className="text-xs text-slate-500">На бесплатных 6 мес.</div>
+                <div className="text-2xl font-extrabold text-emerald-700 mt-1">
+                  {trialCount}
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-2xl border border-slate-200">
+                <div className="text-xs text-slate-500">Скоро оплата / просрочка</div>
+                <div className="text-2xl font-extrabold text-amber-600 mt-1">
+                  {attentionCount}
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-2xl border border-slate-200">
+                <div className="text-xs text-slate-500">На TIYIN AI (25 000 ₸)</div>
+                <div className="text-2xl font-extrabold text-blue-600 mt-1">
+                  {aiTierCount}
+                </div>
+              </div>
+            </div>
+
+            {billingRows.length === 0 ? (
+              <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
+                Пока нет зарегистрированных бизнесов.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {billingRows.map(({ bundle, info }) => {
+                  const biz = bundle.business;
+                  const untilStr = info.activeUntil.toLocaleDateString("ru-RU", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                  const regStr = info.registeredAt.toLocaleDateString("ru-RU", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                  const isBusy = extendingId === biz.id;
+
+                  const badgeClass =
+                    info.status === "overdue"
+                      ? "bg-red-100 text-red-700"
+                      : info.status === "grace"
+                      ? "bg-orange-100 text-orange-800"
+                      : info.status === "expiring_soon"
+                      ? "bg-amber-100 text-amber-800"
+                      : info.status === "paid"
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-emerald-50 text-emerald-700";
+
+                  return (
+                    <div
+                      key={biz.id}
+                      className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-neutral-950">{biz.name}</span>
+                          <span className="text-xs text-slate-400">
+                            /{biz.slug} • {biz.city || "Алматы"}
+                          </span>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${badgeClass}`}
+                          >
+                            {info.label}
+                          </span>
+                          {biz.plan_tier === "ai_autopilot" && (
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-neutral-950 text-white">
+                              TIYIN AI
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                            Регистрация: <strong>{regStr}</strong> (в системе{" "}
+                            <strong>{info.daysUsed} дн.</strong>)
+                          </span>
+                          <span>
+                            {info.isPaid ? "Оплачено до:" : "Бесплатно до:"}{" "}
+                            <strong>{untilStr}</strong> (
+                            {info.daysLeft >= 0
+                              ? `осталось ${info.daysLeft} дн.`
+                              : `просрочено ${Math.abs(info.daysLeft)} дн.`}
+                            )
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
+                          <span>
+                            Контакт:{" "}
+                            <strong>{biz.whatsapp || biz.phone || "не указан"}</strong>
+                          </span>
+                          {bundle.channels.owner_telegram_chat_id && (
+                            <span>
+                              TG Chat ID:{" "}
+                              <strong>{bundle.channels.owner_telegram_chat_id}</strong>
+                            </span>
+                          )}
+                          {biz.billing_note && (
+                            <span className="text-slate-600">
+                              Заметка: {biz.billing_note}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 1-Click Extend Buttons */}
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            handleExtendBilling({
+                              businessId: biz.id,
+                              businessName: biz.name,
+                              months: 1,
+                              amount: BASE_PLAN_MONTHLY_PRICE,
+                              planTier: "base",
+                              comment: `+1 мес. База (${BASE_PLAN_MONTHLY_PRICE} ₸)`,
+                            })
+                          }
+                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition"
+                        >
+                          +1 мес ({formatKZT(BASE_PLAN_MONTHLY_PRICE)})
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            handleExtendBilling({
+                              businessId: biz.id,
+                              businessName: biz.name,
+                              months: 12,
+                              amount: BASE_PLAN_YEARLY_PRICE,
+                              planTier: "base",
+                              comment: `+1 год База (${BASE_PLAN_YEARLY_PRICE} ₸)`,
+                            })
+                          }
+                          className="px-3 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-xs font-semibold transition"
+                        >
+                          +1 год ({formatKZT(BASE_PLAN_YEARLY_PRICE)})
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            handleExtendBilling({
+                              businessId: biz.id,
+                              businessName: biz.name,
+                              months: 1,
+                              amount: AI_AUTOPILOT_MONTHLY_PRICE,
+                              planTier: "ai_autopilot",
+                              comment: `+1 мес. TIYIN AI (${AI_AUTOPILOT_MONTHLY_PRICE} ₸)`,
+                            })
+                          }
+                          className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold transition"
+                        >
+                          +1 мес AI ({formatKZT(AI_AUTOPILOT_MONTHLY_PRICE)})
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* VIEW: SUBSCRIPTION REQUESTS */}
         {adminView === "requests" && (
           <div className="space-y-4">
@@ -289,7 +622,7 @@ export default function AdminPage() {
             </h2>
             {requests.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
-                Заявок из Конструктора подписки пока нет.
+                Заявок на подключение TIYIN AI пока нет.
               </div>
             ) : (
               <div className="space-y-3">
@@ -511,6 +844,52 @@ export default function AdminPage() {
                             }))
                           }
                           placeholder="https://pay.kaspi.kz/pay/..."
+                          className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Тариф компании
+                        </label>
+                        <select
+                          value={current.business.plan_tier || "base"}
+                          onChange={(e) =>
+                            updateCurrentLocal((item) => ({
+                              ...item,
+                              business: {
+                                ...item.business,
+                                plan_tier: e.target.value as "base" | "ai_autopilot",
+                              },
+                            }))
+                          }
+                          className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                        >
+                          <option value="base">База (6 мес. 0 ₸ → 990 ₸/мес)</option>
+                          <option value="ai_autopilot">
+                            TIYIN AI Автопилот (25 000 ₸/мес)
+                          </option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Заметка по оплате (видна только админу)
+                        </label>
+                        <input
+                          type="text"
+                          value={current.business.billing_note || ""}
+                          onChange={(e) =>
+                            updateCurrentLocal((item) => ({
+                              ...item,
+                              business: {
+                                ...item.business,
+                                billing_note: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="Например: Оплатил Kaspi за год"
                           className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
                         />
                       </div>

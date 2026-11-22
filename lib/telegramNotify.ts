@@ -170,3 +170,78 @@ export async function notifySuperAdminSubscription(params: {
 
   await sendTelegramMessage(adminChatId, text, markup);
 }
+export async function notifyOwnerBillingReminder(params: {
+  chatId: string;
+  businessName: string;
+  daysLeft: number;
+  activeUntilFormatted: string;
+  monthlyPrice: number;
+  yearlyPrice: number;
+}) {
+  if (!params.chatId) return false;
+
+  const fmt = (n: number) => new Intl.NumberFormat("ru-RU").format(n);
+  let headline = "";
+  if (params.daysLeft > 1) {
+    headline = `⏳ <b>Через ${params.daysLeft} дн. заканчивается бесплатный период</b>`;
+  } else if (params.daysLeft === 1) {
+    headline = `⏳ <b>Завтра заканчивается срок действия тарифа</b>`;
+  } else if (params.daysLeft === 0) {
+    headline = `🔔 <b>Сегодня заканчивается срок действия тарифа</b>`;
+  } else {
+    headline = `⚠️ <b>Срок действия тарифа истек (${Math.abs(params.daysLeft)} дн. назад)</b>`;
+  }
+
+  const text = [
+    headline,
+    `Компания: <b>${escapeHtml(params.businessName)}</b>`,
+    `Дата окончания: <b>${escapeHtml(params.activeUntilFormatted)}</b>`,
+    ``,
+    `Мы по-прежнему берем <b>0% комиссии с ваших продаж</b>.`,
+    `Выберите удобный вариант продления:`,
+    `• Помесячно: <b>${fmt(params.monthlyPrice)} ₸ / мес</b>`,
+    `• Выгодно на год (2 мес. в подарок): <b>${fmt(params.yearlyPrice)} ₸ / год</b>`,
+    ``,
+    `Для продления напишите нам в Telegram: @tiyinkz`,
+  ].join("\n");
+
+  const markup = buildWebAppButtonMarkup("Открыть кабинет", "/dashboard?tab=settings");
+  return sendTelegramMessage(params.chatId, text, markup);
+}
+
+export async function notifySuperAdminBillingDigest(params: {
+  items: {
+    name: string;
+    slug: string;
+    phone: string;
+    daysUsed: number;
+    daysLeft: number;
+    activeUntilFormatted: string;
+    planTier: string;
+  }[];
+}) {
+  const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID || "";
+  if (!adminChatId || params.items.length === 0) return false;
+
+  const lines = params.items.map((item, idx) => {
+    const statusText =
+      item.daysLeft < 0
+        ? `просрочено ${Math.abs(item.daysLeft)} дн.`
+        : item.daysLeft === 0
+        ? `истекает СЕГОДНЯ`
+        : `осталось ${item.daysLeft} дн.`;
+    const planLabel = item.planTier === "ai_autopilot" ? "TIYIN AI" : "База";
+    return `${idx + 1}. <b>${escapeHtml(item.name)}</b> (/${escapeHtml(item.slug)}) — ${planLabel}, ${statusText} (до ${escapeHtml(item.activeUntilFormatted)}), в системе ${item.daysUsed} дн.${item.phone ? ` • ${escapeHtml(item.phone)}` : ""}`;
+  });
+
+  const text = [
+    `💳 <b>Сводка по срокам и оплатам TIYIN Space (${params.items.length})</b>`,
+    ``,
+    ...lines,
+    ``,
+    `<i>Откройте вкладку «Биллинг» в админке, чтобы отметить оплату в 1 клик.</i>`,
+  ].join("\n");
+
+  const markup = buildWebAppButtonMarkup("Открыть админку", "/admin");
+  return sendTelegramMessage(adminChatId, text, markup);
+}
