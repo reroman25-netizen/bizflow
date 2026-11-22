@@ -48,6 +48,7 @@ import { BUSINESS_CATEGORIES } from "@/lib/categories";
 import { uploadBusinessMedia } from "@/lib/uploadMedia";
 import { BrandLogo } from "@/components/BrandLogo";
 import { TiyinAiCenter } from "@/components/TiyinAiCenter";
+import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
 
 type MainTab = "home" | "orders" | "ai" | "catalog" | "settings";
 type SettingsSection = "menu" | "company" | "payments" | "contacts" | "clients" | "share";
@@ -161,6 +162,11 @@ export default function DashboardPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setOrigin(window.location.origin);
+      const urlTab = new URLSearchParams(window.location.search).get("tab");
+      const allowedTabs: MainTab[] = ["home", "orders", "ai", "catalog", "settings"];
+      if (urlTab && allowedTabs.includes(urlTab as MainTab)) {
+        setActiveTab(urlTab as MainTab);
+      }
     }
 
     const init = async () => {
@@ -635,6 +641,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F7] flex flex-col md:flex-row">
+      <TelegramMiniAppInit />
       {/* DESKTOP COLLAPSIBLE ICON-RAIL SIDEBAR */}
       <aside
         className={`hidden md:flex md:flex-col bg-white border-r border-slate-200/90 sticky top-0 h-screen justify-between shrink-0 transition-all duration-200 ${
@@ -2012,7 +2019,7 @@ export default function DashboardPage() {
       </main>
 
       {/* MOBILE BOTTOM NAVIGATION BAR */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 px-2 pt-1.5 pb-2 z-30">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] z-30">
         <div className="grid grid-cols-5 gap-1 max-w-md mx-auto">
           {navItems.map((item) => {
             const active = activeTab === item.id;

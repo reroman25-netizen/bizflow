@@ -12,21 +12,54 @@ const CHANNEL_LABELS: Record<string, string> = {
   telegram: "Telegram",
 };
 
-export async function sendTelegramMessage(chatId: string, htmlText: string): Promise<boolean> {
+function getAppBaseUrl(): string {
+  const raw = (process.env.NEXT_PUBLIC_SITE_URL || "https://tiyin.kz").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+function buildWebAppButtonMarkup(text: string, path: string): Record<string, unknown> | undefined {
+  const baseUrl = getAppBaseUrl();
+  // Telegram требует строго HTTPS для кнопок Mini App (web_app)
+  if (!baseUrl.startsWith("https://")) {
+    return undefined;
+  }
+  return {
+    inline_keyboard: [
+      [
+        {
+          text,
+          web_app: { url: `${baseUrl}${path}` },
+        },
+      ],
+    ],
+  };
+}
+
+export async function sendTelegramMessage(
+  chatId: string,
+  htmlText: string,
+  replyMarkup?: Record<string, unknown>
+): Promise<boolean> {
   const token = process.env.TELEGRAM_NOTIFY_BOT_TOKEN;
   const cleanChatId = (chatId || "").trim();
   if (!token || !cleanChatId) return false;
 
   try {
+    const payload: Record<string, unknown> = {
+      chat_id: cleanChatId,
+      text: htmlText,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    };
+
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
+    }
+
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: cleanChatId,
-        text: htmlText,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(payload),
     });
     return res.ok;
   } catch {
@@ -71,7 +104,12 @@ export async function notifyOwnerNewOrder(params: {
     .filter(Boolean)
     .join("\n");
 
-  await sendTelegramMessage(params.chatId, text);
+  const markup = buildWebAppButtonMarkup(
+    "Открыть в кабинете",
+    "/dashboard?tab=orders"
+  );
+
+  await sendTelegramMessage(params.chatId, text, markup);
 }
 
 export async function notifyOwnerHandoff(params: {
@@ -97,7 +135,12 @@ export async function notifyOwnerHandoff(params: {
     `<i>ИИ-агент поставил этот чат на паузу. Откройте раздел TIYIN AI в кабинете.</i>`,
   ].join("\n");
 
-  await sendTelegramMessage(params.chatId, text);
+  const markup = buildWebAppButtonMarkup(
+    "Открыть диалог в кабинете",
+    "/dashboard?tab=ai"
+  );
+
+  await sendTelegramMessage(params.chatId, text, markup);
 }
 
 export async function notifySuperAdminSubscription(params: {
@@ -123,5 +166,7 @@ export async function notifySuperAdminSubscription(params: {
     .filter(Boolean)
     .join("\n");
 
-  await sendTelegramMessage(adminChatId, text);
+  const markup = buildWebAppButtonMarkup("Открыть админку", "/admin");
+
+  await sendTelegramMessage(adminChatId, text, markup);
 }
