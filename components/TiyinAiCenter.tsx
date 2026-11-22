@@ -29,12 +29,7 @@ import {
   SubscriptionRequest,
 } from "@/lib/types";
 import { formatDate, formatKZT } from "@/lib/format";
-import {
-  ALL_IN_DISCOUNT_PERCENT,
-  SUBSCRIPTION_MODULES,
-  SubscriptionChannelId,
-  calculateSubscription,
-} from "@/lib/subscriptionPlans";
+import { SUBSCRIPTION_TIERS } from "@/lib/subscriptionPlans";
 
 interface TiyinAiCenterProps {
   accessToken: string;
@@ -91,9 +86,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
   const [loadingMessages, setLoadingMessages] = useState(false);
 
   const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionRequest[]>([]);
-  const [selectedModules, setSelectedModules] = useState<SubscriptionChannelId[]>([
-    "whatsapp",
-  ]);
+  const [selectedTierId, setSelectedTierId] = useState<"start" | "autopilot">("start");
   const [subContactPhone, setSubContactPhone] = useState(
     business.whatsapp || business.phone || ""
   );
@@ -222,18 +215,11 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
     }
   };
 
-  const toggleModule = (id: SubscriptionChannelId) => {
-    setSelectedModules((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  };
+  const activeTier =
+    SUBSCRIPTION_TIERS.find((t) => t.id === selectedTierId) || SUBSCRIPTION_TIERS[0];
 
   const handleSubmitSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedModules.length === 0) {
-      setErrorMsg("Выберите хотя бы один канал для подключения.");
-      return;
-    }
     setSendingReq(true);
     setErrorMsg("");
     try {
@@ -244,9 +230,11 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          channels: selectedModules,
+          channels: activeTier.channels,
           contactPhone: subContactPhone,
-          comment: subComment,
+          comment: subComment
+            ? `[${activeTier.title}] ${subComment}`
+            : `Тариф: ${activeTier.title}`,
         }),
       });
       const json = await res.json();
@@ -254,7 +242,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         setSubscriptionRequests((prev) => [json.request, ...prev]);
         setSubComment("");
         showToast(
-          "Заявка отправлена! Команда TIYIN Space свяжется с вами для запуска автопилота."
+          "Заявка отправлена! Команда TIYIN Space свяжется с вами для запуска тарифа."
         );
       } else {
         setErrorMsg(json.error || "Ошибка отправки заявки.");
@@ -265,17 +253,15 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
   };
 
   const selectedConv = conversations.find((c) => c.id === selectedConvId) || null;
-  const calc = calculateSubscription(selectedModules);
-
   const nonCancelledOrders = orders.filter((o) => o.status !== "cancelled");
   const totalRevenue = nonCancelledOrders.reduce((sum, o) => sum + (o.total_price || 0), 0);
   const needsHumanCount = conversations.filter((c) => c.tag === "needs_human").length;
 
   const channelPills = [
     { key: "web", label: "Витрина", active: channels.web_enabled },
+    { key: "telegram", label: "Telegram", active: channels.telegram_enabled },
     { key: "whatsapp", label: "WhatsApp", active: channels.whatsapp_enabled },
     { key: "instagram", label: "Instagram", active: channels.instagram_enabled },
-    { key: "telegram", label: "Telegram", active: channels.telegram_enabled },
   ];
 
   if (loading) {
@@ -288,7 +274,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
 
   return (
     <div className="space-y-5">
-      {/* Slide 4 Dark Hero Card */}
+      {/* Dark Hero Card */}
       <div className="bg-neutral-950 text-white rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -328,7 +314,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
           </button>
         </div>
 
-        {/* Metrics Row inside Hero */}
         <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
           <div className="bg-white/[0.06] border border-white/10 rounded-2xl p-3 sm:p-3.5">
             <div className="text-[11px] text-neutral-400">Оборот заказов</div>
@@ -352,7 +337,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
           </div>
         </div>
 
-        {/* Channel Status Pills */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {channelPills.map((ch) => (
             <span
@@ -374,7 +358,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </div>
       </div>
 
-      {/* Notifications */}
       {notice && (
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-2xl flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -389,7 +372,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </div>
       )}
 
-      {/* Clean Segmented Tabs (Slide 4 style) */}
+      {/* Segmented Tabs */}
       <div className="grid grid-cols-3 gap-1.5 bg-slate-200/70 p-1.5 rounded-2xl">
         <button
           type="button"
@@ -427,14 +410,13 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
           }`}
         >
           <Layers className="w-4 h-4 shrink-0" />
-          <span className="truncate">Каналы</span>
+          <span className="truncate">Тарифы</span>
         </button>
       </div>
 
-      {/* SUBTAB 1: LIVE DIALOGS WITH 1-CLICK PAUSE */}
+      {/* SUBTAB 1: DIALOGS */}
       {subTab === "dialogs" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Conversation list */}
           <div
             className={`${
               mobileChatOpen ? "hidden lg:block" : "block"
@@ -452,7 +434,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                 <p className="font-medium text-neutral-800">Пока нет диалогов</p>
                 <p className="text-xs text-slate-400 mt-1">
                   Как только клиент напишет в чат на витрине или в мессенджер, переписка
-                  сразу появится здесь.
+                  появится здесь.
                 </p>
               </div>
             ) : (
@@ -481,7 +463,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                           {formatDate(conv.last_message_at)}
                         </span>
                       </div>
-
                       <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${ch.className}`}
@@ -499,7 +480,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                           </span>
                         )}
                       </div>
-
                       {conv.summary && (
                         <p className="text-xs text-slate-500 line-clamp-1 mt-1.5">
                           {conv.summary}
@@ -512,7 +492,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
             )}
           </div>
 
-          {/* Chat viewer */}
           <div
             className={`${
               mobileChatOpen ? "flex" : "hidden lg:flex"
@@ -526,7 +505,6 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                       type="button"
                       onClick={() => setMobileChatOpen(false)}
                       className="lg:hidden p-1.5 -ml-1 rounded-xl hover:bg-slate-200/70 text-neutral-700"
-                      aria-label="Назад к списку"
                     >
                       <ChevronLeft className="w-5 h-5" />
                     </button>
@@ -612,7 +590,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </div>
       )}
 
-      {/* SUBTAB 2: DAILY NOTES & TELEGRAM INSTANT ALERTS */}
+      {/* SUBTAB 2: DAILY NOTES & TELEGRAM */}
       {subTab === "settings" && (
         <form onSubmit={handleSaveSettings} className="space-y-4 max-w-2xl">
           <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
@@ -663,8 +641,7 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
               >
                 @userinfobot
               </a>
-              , скопируйте свой <strong>Chat ID</strong> и вставьте ниже (и нажмите /start
-              в боте уведомлений TIYIN Space).
+              , скопируйте свой <strong>Chat ID</strong> и вставьте ниже.
             </p>
 
             <input
@@ -689,102 +666,98 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
         </form>
       )}
 
-      {/* SUBTAB 3: SLIDE 4 MODULAR SUBSCRIPTION CONSTRUCTOR */}
+      {/* SUBTAB 3: TWO CLEAN SUBSCRIPTION TIERS (5 000 ₸ & 20 000 ₸) */}
       {subTab === "subscription" && (
         <div className="space-y-5">
           <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-sm space-y-5">
             <div>
               <h2 className="text-lg font-bold text-neutral-950">
-                Конструктор подписки TIYIN AI
+                Тарифы TIYIN AI
               </h2>
               <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Кабинет и витрина TIYIN Space бесплатны навсегда. Выберите только те
-                площадки, где нужен автопилот — при выборе всех модулей действует скидка{" "}
-                {ALL_IN_DISCOUNT_PERCENT}%.
+                Кабинет, витрина и ручной прием заказов бесплатны навсегда (0 ₸). Выберите
+                подходящий уровень автоматизации продаж:
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {SUBSCRIPTION_MODULES.map((mod) => {
-                const checked = selectedModules.includes(mod.id);
-                const alreadyActive =
-                  (mod.id === "web" && channels.web_enabled) ||
-                  (mod.id === "whatsapp" && channels.whatsapp_enabled) ||
-                  (mod.id === "instagram" && channels.instagram_enabled) ||
-                  (mod.id === "telegram" && channels.telegram_enabled);
-
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {SUBSCRIPTION_TIERS.map((tier) => {
+                const selected = selectedTierId === tier.id;
                 return (
                   <button
-                    key={mod.id}
+                    key={tier.id}
                     type="button"
-                    onClick={() => toggleModule(mod.id)}
-                    className={`text-left p-4 rounded-2xl border-2 transition ${
-                      checked
-                        ? "border-neutral-950 bg-neutral-50/80 shadow-sm"
+                    onClick={() => setSelectedTierId(tier.id)}
+                    className={`text-left p-5 rounded-2xl border-2 transition flex flex-col justify-between ${
+                      selected
+                        ? "border-neutral-950 bg-neutral-50/90 shadow-sm"
                         : "border-slate-200 bg-white hover:border-slate-300"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="font-bold text-sm text-neutral-950">
-                          {mod.title}
-                        </div>
-                        {alreadyActive && (
-                          <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">
-                            Подключен
-                          </span>
-                        )}
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                            tier.id === "autopilot"
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {tier.badge}
+                        </span>
+                        <span
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selected
+                              ? "border-neutral-950 bg-neutral-950 text-white"
+                              : "border-slate-300"
+                          }`}
+                        >
+                          {selected && <Check className="w-3 h-3" />}
+                        </span>
                       </div>
-                      <span
-                        className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 border transition ${
-                          checked
-                            ? "bg-neutral-950 border-neutral-950 text-white"
-                            : "border-slate-300 bg-white"
-                        }`}
-                      >
-                        {checked && <Check className="w-3.5 h-3.5" />}
-                      </span>
+
+                      <div className="font-bold text-lg text-neutral-950 mt-3">
+                        {tier.title}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">{tier.subtitle}</div>
+
+                      <div className="text-2xl font-extrabold text-neutral-950 mt-3">
+                        {formatKZT(tier.priceMonthly)}{" "}
+                        <span className="text-xs font-medium text-slate-400">/ мес</span>
+                      </div>
+
+                      <ul className="mt-4 space-y-2 text-xs text-slate-600">
+                        {tier.features.map((f) => (
+                          <li key={f} className="flex items-start gap-2">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
 
-                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                      {mod.description}
-                    </p>
-
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <span className="font-bold text-neutral-950">
-                        {formatKZT(mod.priceMonthly)} / мес
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-slate-400">
-                        <Clock className="w-3 h-3" />
-                        Запуск: {mod.setupDays} дн.
-                      </span>
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-1.5 text-[11px] text-slate-400">
+                      <Clock className="w-3.5 h-3.5" />
+                      Запуск под ключ: до {tier.setupDays}{" "}
+                      {tier.setupDays === 1 ? "дня" : "дней"}
                     </div>
                   </button>
                 );
               })}
             </div>
 
-            {/* Dark Checkout Summary Card */}
             <form
               onSubmit={handleSubmitSubscription}
               className="bg-neutral-950 text-white rounded-2xl p-5 space-y-4"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <div className="text-xs text-neutral-400">
-                    Выбрано модулей: {calc.modules.length} • Поэтапный запуск до{" "}
-                    {calc.estimatedDays} {calc.estimatedDays === 1 ? "дня" : "дней"}
-                  </div>
-                  <div className="flex flex-wrap items-baseline gap-2.5 mt-1">
-                    <span className="text-2xl font-bold">
-                      {formatKZT(calc.finalPrice)} / мес
-                    </span>
-                    {calc.hasAllDiscount && (
-                      <span className="text-xs text-emerald-400 font-semibold">
-                        Скидка −{ALL_IN_DISCOUNT_PERCENT}% (−{formatKZT(calc.discount)})
-                      </span>
-                    )}
-                  </div>
+              <div>
+                <div className="text-xs text-neutral-400">
+                  Выбран тариф: <strong className="text-white">{activeTier.title}</strong> •
+                  Запуск до {activeTier.setupDays}{" "}
+                  {activeTier.setupDays === 1 ? "дня" : "дней"}
+                </div>
+                <div className="text-2xl font-bold mt-1">
+                  {formatKZT(activeTier.priceMonthly)} / мес
                 </div>
               </div>
 
@@ -808,11 +781,11 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
 
               <button
                 type="submit"
-                disabled={sendingReq || selectedModules.length === 0}
+                disabled={sendingReq}
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-white hover:bg-neutral-200 disabled:opacity-50 text-neutral-950 font-semibold text-sm transition"
               >
                 <Send className="w-4 h-4" />
-                {sendingReq ? "Отправляем..." : "Отправить заявку на подключение"}
+                {sendingReq ? "Отправляем..." : "Подключить тариф"}
               </button>
             </form>
           </div>
@@ -830,10 +803,10 @@ export function TiyinAiCenter({ accessToken, business, orders }: TiyinAiCenterPr
                     >
                       <div>
                         <div className="font-medium text-neutral-900">
-                          Каналы:{" "}
-                          {Array.isArray(req.selected_channels)
-                            ? req.selected_channels.join(", ")
-                            : ""}
+                          {req.comment ||
+                            (Array.isArray(req.selected_channels)
+                              ? req.selected_channels.join(", ")
+                              : "")}
                         </div>
                         <div className="text-xs text-slate-400 mt-0.5">
                           {formatDate(req.created_at)} • Запуск до {req.estimated_days} дн.

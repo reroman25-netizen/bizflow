@@ -22,6 +22,10 @@ import {
   Check,
   ExternalLink,
   Trash2,
+  Instagram,
+  Package,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, Product } from "@/lib/types";
@@ -49,7 +53,7 @@ const DELIVERY_OPTIONS = [
   {
     id: "Доставка курьером",
     label: "Доставка курьером",
-    hint: "Условия и стоимость уточнит менеджер",
+    hint: "Укажите адрес доставки ниже",
   },
   {
     id: "Услуга / Запись",
@@ -63,6 +67,18 @@ function normalizeUrl(raw: string): string {
   if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return "https://" + trimmed;
+}
+
+function normalizeInstagramUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const cleanHandle = trimmed
+    .replace(/^@/, "")
+    .replace(/^instagram\.com\//i, "")
+    .replace(/^www\.instagram\.com\//i, "")
+    .replace(/\/+$/, "");
+  return cleanHandle ? `https://instagram.com/${cleanHandle}` : "";
 }
 
 function getOrCreateChatSessionId(businessId: string): string {
@@ -79,6 +95,19 @@ function getOrCreateChatSessionId(businessId: string): string {
   return generated;
 }
 
+function getProductPhotos(p: Product): string[] {
+  const list: string[] = [];
+  if (p.image_url?.trim()) list.push(p.image_url.trim());
+  if (Array.isArray(p.gallery_urls)) {
+    for (const url of p.gallery_urls) {
+      if (typeof url === "string" && url.trim() && !list.includes(url.trim())) {
+        list.push(url.trim());
+      }
+    }
+  }
+  return list;
+}
+
 export default function BusinessStorefrontPage() {
   const params = useParams();
   const slug = String(params?.slug || "");
@@ -90,14 +119,19 @@ export default function BusinessStorefrontPage() {
 
   const [selectedCategory, setSelectedCategory] = useState("Все");
   const [cart, setCart] = useState<Record<string, number>>({});
+  const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState("");
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
   const [copiedAmount, setCopiedAmount] = useState(false);
+  const [addedToast, setAddedToast] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState("Оплата при получении / Уточнить");
   const [deliveryMethod, setDeliveryMethod] = useState("Самовывоз");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("+7 ");
   const [comment, setComment] = useState("");
@@ -111,7 +145,7 @@ export default function BusinessStorefrontPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
       role: "assistant",
-      text: "Здравствуйте! Я ИИ-помощник компании. Подсказать по услугам, ценам или помочь оформить заказ?",
+      text: "Здравствуйте! Подсказать по товарам, услугам, ценам или помочь оформить заказ?",
     },
   ]);
 
@@ -147,7 +181,6 @@ export default function BusinessStorefrontPage() {
       setBusiness(typedBiz);
       setChatSessionId(getOrCreateChatSessionId(typedBiz.id));
 
-      // Устанавливаем способ оплаты по умолчанию в зависимости от настроек бизнеса
       if (typedBiz.kaspi_pay_link?.trim()) {
         setPaymentMethod("Kaspi Pay");
       } else if (typedBiz.halyk_enabled) {
@@ -180,7 +213,7 @@ export default function BusinessStorefrontPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">
+      <div className="min-h-screen flex items-center justify-center text-slate-500 bg-[#F6F7F9]">
         Загрузка витрины...
       </div>
     );
@@ -188,7 +221,7 @@ export default function BusinessStorefrontPage() {
 
   if (!business) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center bg-[#FAFAFB]">
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center bg-[#F6F7F9]">
         <h1 className="text-2xl font-bold text-neutral-950 mb-2">Компания не найдена</h1>
         <p className="text-sm text-slate-500 mb-6">
           Проверьте ссылку или найдите нужную компанию через поиск.
@@ -206,6 +239,7 @@ export default function BusinessStorefrontPage() {
   const kaspiLink = normalizeUrl(business.kaspi_pay_link || "");
   const hasKaspi = Boolean(kaspiLink);
   const hasHalyk = Boolean(business.halyk_enabled);
+  const instagramUrl = normalizeInstagramUrl(business.instagram || "");
 
   const paymentOptions: {
     id: string;
@@ -226,7 +260,7 @@ export default function BusinessStorefrontPage() {
     paymentOptions.push({
       id: "Halyk Bank",
       label: "Halyk Bank",
-      hint: "Оплата через Halyk QR / карту (менеджер подтвердит)",
+      hint: "Оплата через Halyk QR / карту",
       badge: "halyk",
     });
   }
@@ -236,17 +270,21 @@ export default function BusinessStorefrontPage() {
     hint: "Наличными или по согласованию с менеджером",
   });
 
-  const categories = [
-    "Все",
-    ...Array.from(new Set(products.map((p) => p.category || "Услуги"))),
-  ];
+  const uniqueCategories = Array.from(
+    new Set(products.map((p) => (p.category || "").trim()).filter(Boolean))
+  );
+  const categories = uniqueCategories.length > 0 ? ["Все", ...uniqueCategories] : [];
+
   const filteredProducts =
     selectedCategory === "Все"
       ? products
-      : products.filter((p) => (p.category || "Услуги") === selectedCategory);
+      : products.filter((p) => (p.category || "").trim() === selectedCategory);
 
-  const addToCart = (id: string) =>
-    setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  const addToCart = (product: Product) => {
+    setCart((prev) => ({ ...prev, [product.id]: (prev[product.id] || 0) + 1 }));
+    setAddedToast(`«${product.name}» добавлено в корзину`);
+    setTimeout(() => setAddedToast(""), 1800);
+  };
 
   const removeFromCart = (id: string) =>
     setCart((prev) => {
@@ -263,10 +301,9 @@ export default function BusinessStorefrontPage() {
       return next;
     });
 
-  const handleBuyNow = (id: string) => {
-    setCart((prev) => ({ ...prev, [id]: prev[id] ? prev[id] : 1 }));
-    setOrderError("");
-    setCheckoutOpen(true);
+  const openProductModal = (p: Product) => {
+    setActiveProduct(p);
+    setActivePhotoIndex(0);
   };
 
   const cartItems = Object.entries(cart)
@@ -283,8 +320,22 @@ export default function BusinessStorefrontPage() {
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientName.trim() || !clientPhone.trim() || cartItems.length === 0) return;
+    if (deliveryMethod === "Доставка курьером" && !deliveryAddress.trim()) {
+      setOrderError("Пожалуйста, укажите адрес доставки.");
+      return;
+    }
+
     setSubmittingOrder(true);
     setOrderError("");
+
+    const fullComment = [
+      deliveryMethod === "Доставка курьером" && deliveryAddress.trim()
+        ? `Адрес доставки: ${deliveryAddress.trim()}`
+        : "",
+      comment.trim(),
+    ]
+      .filter(Boolean)
+      .join(" | ");
 
     try {
       const res = await fetch("/api/orders", {
@@ -295,7 +346,7 @@ export default function BusinessStorefrontPage() {
           userId,
           clientName: clientName.trim(),
           clientPhone: clientPhone.trim(),
-          comment: comment.trim(),
+          comment: fullComment,
           paymentMethod,
           deliveryMethod,
           source: "web",
@@ -351,7 +402,7 @@ export default function BusinessStorefrontPage() {
         setChatOrderBanner(
           `Заказ ${json.orderCreated.orderCode} на ${formatKZT(
             json.orderCreated.totalPrice
-          )} оформлен через TIYIN AI`
+          )} оформлен!`
         );
       }
     } catch {
@@ -380,98 +431,120 @@ export default function BusinessStorefrontPage() {
     return `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
   };
 
-  return (
-    <div className="min-h-screen bg-[#FAFAFB] pb-28">
-      {/* Storefront Header (ONLY this business) */}
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-2xl mx-auto px-4 py-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-neutral-900"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Поиск компаний
-            </Link>
-            <Link href="/" className="opacity-80 hover:opacity-100 transition">
-              <BrandLogo size="sm" />
-            </Link>
-          </div>
+  const hasSocialLinks = Boolean(
+    instagramUrl || business.whatsapp || business.telegram || business.phone
+  );
 
-          <div className="pt-1 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold text-neutral-950">{business.name}</h1>
-                {business.category && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-medium">
-                    {business.category}
-                  </span>
-                )}
-              </div>
+  const activePhotos = activeProduct ? getProductPhotos(activeProduct) : [];
+
+  return (
+    <div className="min-h-screen bg-[#F6F7F9] pb-24">
+      {/* STICKY TOP BAR: Back (left) | TIYIN Space logo (center) | Cart button (right) */}
+      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200/80">
+        <div className="max-w-2xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
+          <Link
+            href="/"
+            aria-label="Поиск компаний"
+            className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center text-neutral-700 transition shrink-0"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+
+          <Link href="/" className="hover:opacity-90 transition">
+            <BrandLogo size="sm" />
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOrderError("");
+              setCheckoutOpen(true);
+            }}
+            aria-label="Открыть корзину"
+            className={`relative h-10 px-3 rounded-xl flex items-center gap-1.5 font-semibold text-xs transition shrink-0 ${
+              cartCount > 0
+                ? "bg-neutral-950 text-white shadow-sm"
+                : "bg-slate-100 text-neutral-700 hover:bg-slate-200"
+            }`}
+          >
+            <ShoppingCart className="w-4 h-4" />
+            {cartCount > 0 && <span>{cartCount}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* Quick Toast when item added */}
+      {addedToast && (
+        <div className="fixed top-16 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
+          <div className="bg-neutral-950 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg">
+            {addedToast}
+          </div>
+        </div>
+      )}
+
+      {/* MAIN CONTAINER */}
+      <div className="max-w-2xl mx-auto">
+        {/* RED ZONE: COVER BANNER WITH BUSINESS NAME ON LEFT & DARK GRADIENT */}
+        <div className="px-3 sm:px-4 pt-3">
+          <div
+            className="relative h-44 sm:h-52 rounded-3xl overflow-hidden shadow-sm border border-slate-200/80 flex items-end p-5"
+            style={
+              business.cover_url
+                ? {
+                    backgroundImage: `url(${business.cover_url})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }
+                : {
+                    background:
+                      "radial-gradient(circle at 82% 18%, #2e3b55 0%, #151923 55%, #090b10 100%)",
+                  }
+            }
+          >
+            {/* Subtle decorative glow for default cover */}
+            {!business.cover_url && (
+              <div
+                className="absolute -right-12 -top-12 w-56 h-56 rounded-full opacity-30 blur-3xl pointer-events-none"
+                style={{
+                  background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
+                }}
+              />
+            )}
+
+            {/* Contrast Scrim so text is ALWAYS crisp & readable */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-black/10" />
+
+            <div className="relative z-10 text-left max-w-[92%]">
+              {business.category && (
+                <span className="inline-block px-2.5 py-0.5 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white/90 text-[11px] font-medium mb-2">
+                  {business.category}
+                </span>
+              )}
+              <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight drop-shadow-sm">
+                {business.name}
+              </h1>
               {business.tagline && (
-                <p className="text-sm text-slate-600 mt-1">{business.tagline}</p>
+                <p className="text-xs sm:text-sm text-white/80 mt-1 line-clamp-2">
+                  {business.tagline}
+                </p>
               )}
             </div>
-
-            {/* Аккуратные значки банков — видны ТОЛЬКО если бизнес подключил их в настройках оплаты */}
-            {(hasKaspi || hasHalyk) && (
-              <div className="flex items-center gap-1.5 pt-0.5">
-                {hasKaspi && (
-                  <span
-                    title="Принимаем оплату через Kaspi Pay"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-red-50/80 border border-red-200/70 text-[11px] font-semibold text-neutral-900"
-                  >
-                    <span className="w-4 h-4 rounded-md bg-[#F14635] text-white text-[10px] font-extrabold flex items-center justify-center">
-                      K
-                    </span>
-                    <span>Kaspi</span>
-                  </span>
-                )}
-                {hasHalyk && (
-                  <span
-                    title="Принимаем оплату через Halyk Bank"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50/80 border border-emerald-200/70 text-[11px] font-semibold text-neutral-900"
-                  >
-                    <span className="w-4 h-4 rounded-md bg-[#00805F] text-white text-[10px] font-extrabold flex items-center justify-center">
-                      H
-                    </span>
-                    <span>Halyk</span>
-                  </span>
-                )}
-              </div>
-            )}
           </div>
+        </div>
 
-          {business.services_description && (
-            <p className="text-xs sm:text-sm text-slate-600 bg-slate-50 rounded-xl p-3.5 whitespace-pre-line">
-              {business.services_description}
-            </p>
-          )}
-
-          <div className="flex flex-wrap gap-3 text-xs text-slate-600">
-            {locationLabel && (
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                {locationLabel}
-              </span>
-            )}
-            {business.working_hours && (
-              <span className="inline-flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                {business.working_hours}
-              </span>
-            )}
-          </div>
-
-          {(business.phone || business.whatsapp || business.telegram) && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {business.phone && (
+        {/* GREEN ZONE: SOCIAL LINKS & CONTACTS (ONLY IF CONFIGURED BY BUSINESS) */}
+        <div className="px-3 sm:px-4 pt-3.5 space-y-2.5">
+          {hasSocialLinks && (
+            <div className="flex flex-wrap gap-2">
+              {instagramUrl && (
                 <a
-                  href={`tel:${business.phone}`}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-neutral-900 text-xs font-semibold transition"
+                  href={instagramUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-pink-500/10 to-purple-500/10 hover:from-pink-500/15 hover:to-purple-500/15 border border-pink-200/80 text-pink-700 text-xs font-semibold transition"
                 >
-                  <Phone className="w-3.5 h-3.5" />
-                  Позвонить
+                  <Instagram className="w-3.5 h-3.5" />
+                  Instagram
                 </a>
               )}
               {business.whatsapp && (
@@ -479,7 +552,7 @@ export default function BusinessStorefrontPage() {
                   href={`https://wa.me/${cleanPhoneForWa(business.whatsapp)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold transition"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/70 text-emerald-700 text-xs font-semibold transition"
                 >
                   <MessageCircle className="w-3.5 h-3.5" />
                   WhatsApp
@@ -490,157 +563,361 @@ export default function BusinessStorefrontPage() {
                   href={`https://t.me/${cleanTelegramHandle(business.telegram)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-semibold transition"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-sky-50 hover:bg-sky-100 border border-sky-200/70 text-sky-700 text-xs font-semibold transition"
                 >
                   <Send className="w-3.5 h-3.5" />
                   Telegram
                 </a>
               )}
+              {business.phone && (
+                <a
+                  href={`tel:${business.phone}`}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white hover:bg-slate-100 border border-slate-200 text-neutral-800 text-xs font-semibold transition"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  Позвонить
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Address & Working Hours */}
+          {(locationLabel || business.working_hours) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 px-1">
+              {locationLabel && (
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  {locationLabel}
+                </span>
+              )}
+              {business.working_hours && (
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  {business.working_hours}
+                </span>
+              )}
             </div>
           )}
         </div>
-      </header>
 
-      {/* Catalog */}
-      <main className="max-w-2xl mx-auto px-4 pt-5 space-y-5">
-        {products.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-4 py-2 rounded-full text-xs font-medium whitespace-nowrap transition ${
-                  selectedCategory === cat
-                    ? "bg-neutral-950 text-white"
-                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+        {/* BLACK ZONE: COMPACT CATEGORY BUTTONS (TEXT ONLY, NO ICONS) */}
+        {categories.length > 0 && (
+          <div className="px-3 sm:px-4 pt-4">
+            <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${
+                    selectedCategory === cat
+                      ? "bg-neutral-950 text-white shadow-sm"
+                      : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="space-y-3">
+        {/* INSTAGRAM-STYLE 2-COLUMN PRODUCT GRID */}
+        <main className="px-3 sm:px-4 pt-4">
           {filteredProducts.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
+            <div className="bg-white p-8 rounded-3xl border border-slate-200 text-center text-sm text-slate-500">
               Каталог компании пока наполняется. Вы можете связаться по контактам выше
-              или написать ИИ-помощнику.
+              или написать в чат компании.
             </div>
           ) : (
-            filteredProducts.map((product) => {
-              const qty = cart[product.id] || 0;
-              return (
-                <div
-                  key={product.id}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-semibold text-neutral-950">{product.name}</div>
-                      {product.description && (
-                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
-                          {product.description}
-                        </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {filteredProducts.map((product) => {
+                const qty = cart[product.id] || 0;
+                const photos = getProductPhotos(product);
+                const mainPhoto = photos[0];
+
+                return (
+                  <div
+                    key={product.id}
+                    onClick={() => openProductModal(product)}
+                    className="group bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-sm hover:shadow-md transition flex flex-col cursor-pointer"
+                  >
+                    {/* Product Square Image */}
+                    <div className="relative aspect-square bg-slate-100 overflow-hidden">
+                      {mainPhoto ? (
+                        <img
+                          src={mainPhoto}
+                          alt={product.name}
+                          className="w-full h-full object-cover group-hover:scale-[1.03] transition duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200/70 text-slate-400">
+                          <Package className="w-8 h-8 opacity-50" />
+                        </div>
+                      )}
+
+                      {/* Photo count indicator if gallery has > 1 photo */}
+                      {photos.length > 1 && (
+                        <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold">
+                          1/{photos.length}
+                        </span>
                       )}
                     </div>
-                    <div className="font-bold text-neutral-950 shrink-0 text-base">
-                      {formatKZT(product.price)}
+
+                    {/* Card Content: Title + Short Description + Bottom-Right Colorful Cart Square */}
+                    <div className="p-2.5 sm:p-3 flex-1 flex flex-col justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-xs sm:text-sm text-neutral-950 line-clamp-2 leading-snug">
+                          {product.name}
+                        </div>
+                        {product.description && (
+                          <p className="text-[11px] text-slate-500 line-clamp-2 mt-1 leading-relaxed">
+                            {product.description}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Price (left) + Small Colorful Square Cart+ Button (bottom-right) */}
+                      <div className="flex items-end justify-between gap-1.5 pt-1">
+                        <div className="font-extrabold text-sm text-neutral-950 leading-none">
+                          {formatKZT(product.price)}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            addToCart(product);
+                          }}
+                          aria-label={
+                            product.item_type === "service"
+                              ? "Заказать услугу"
+                              : "Добавить в корзину"
+                          }
+                          className={`relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition active:scale-95 ${
+                            qty > 0
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              : "bg-blue-600 hover:bg-blue-700 text-white"
+                          }`}
+                        >
+                          <ShoppingCart className="w-4 h-4" />
+                          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-md bg-neutral-950 text-white text-[9px] font-extrabold flex items-center justify-center border border-white">
+                            {qty > 0 ? qty : "+"}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Кнопки под товаром / услугой */}
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                    {qty === 0 ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => addToCart(product.id)}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-neutral-800 text-xs font-semibold transition"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          В корзину
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleBuyNow(product.id)}
-                          className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold transition"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5" />
-                          Купить / Заказать
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
-                          <button
-                            type="button"
-                            onClick={() => removeFromCart(product.id)}
-                            className="w-7 h-7 rounded-lg bg-white flex items-center justify-center text-slate-700 shadow-sm"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="w-6 text-center text-sm font-semibold">
-                            {qty}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => addToCart(product.id)}
-                            className="w-7 h-7 rounded-lg bg-neutral-950 text-white flex items-center justify-center shadow-sm"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setCheckoutOpen(true)}
-                          className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold transition"
-                        >
-                          Перейти в корзину
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
-        </div>
-      </main>
-
-      {/* Bottom Floating Cart & AI Chat */}
-      <div className="fixed bottom-4 inset-x-0 px-4 z-30 pointer-events-none">
-        <div className="max-w-2xl mx-auto flex items-center justify-end gap-3">
-          {cartCount > 0 && (
-            <button
-              onClick={() => setCheckoutOpen(true)}
-              className="pointer-events-auto flex-1 flex items-center justify-between px-5 py-3.5 rounded-2xl bg-neutral-950 text-white shadow-lg hover:bg-neutral-800 transition"
-            >
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <ShoppingCart className="w-4 h-4" />
-                Корзина ({cartCount})
-              </span>
-              <span className="font-bold text-sm">{formatKZT(cartTotal)}</span>
-            </button>
-          )}
-
-          {aiEnabled && (
-            <button
-              onClick={() => setChatOpen(true)}
-              className="pointer-events-auto flex items-center gap-2 px-4 py-3.5 rounded-2xl bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition text-sm font-semibold"
-            >
-              <Bot className="w-5 h-5" />
-              <span>Чат с ИИ</span>
-            </button>
-          )}
-        </div>
+        </main>
       </div>
+
+      {/* FLOATING CHAT BUTTON: "Чат с [Название бизнеса]" */}
+      {aiEnabled && (
+        <div className="fixed bottom-4 right-4 z-30">
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white shadow-lg transition text-xs sm:text-sm font-semibold max-w-[260px]"
+          >
+            <Bot className="w-4 h-4 shrink-0" />
+            <span className="truncate">Чат с {business.name}</span>
+          </button>
+        </div>
+      )}
+
+      {/* PRODUCT DETAIL POPUP MODAL (MEDIUM-SIZED, WITH GALLERY & FULL DESCRIPTION) */}
+      {activeProduct && (
+        <div
+          onClick={() => setActiveProduct(null)}
+          className="fixed inset-0 bg-black/55 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-md max-h-[88vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl"
+          >
+            {/* Photo / Gallery Carousel */}
+            <div className="relative bg-slate-100 aspect-[4/3] shrink-0 overflow-hidden">
+              {activePhotos.length > 0 ? (
+                <img
+                  src={activePhotos[activePhotoIndex] || activePhotos[0]}
+                  alt={activeProduct.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-slate-300">
+                  <Package className="w-12 h-12" />
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setActiveProduct(null)}
+                className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center backdrop-blur-sm transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {activePhotos.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivePhotoIndex((prev) =>
+                        prev === 0 ? activePhotos.length - 1 : prev - 1
+                      )
+                    }
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center backdrop-blur-sm"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivePhotoIndex((prev) =>
+                        prev === activePhotos.length - 1 ? 0 : prev + 1
+                      )
+                    }
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center backdrop-blur-sm"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <div className="absolute bottom-2.5 inset-x-0 flex justify-center gap-1.5">
+                    {activePhotos.map((_, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setActivePhotoIndex(idx)}
+                        className={`h-1.5 rounded-full transition-all ${
+                          idx === activePhotoIndex
+                            ? "w-5 bg-white"
+                            : "w-1.5 bg-white/50"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Thumbnails strip if multiple photos */}
+            {activePhotos.length > 1 && (
+              <div className="px-4 pt-3 flex gap-2 overflow-x-auto shrink-0">
+                {activePhotos.map((url, idx) => (
+                  <button
+                    key={url + idx}
+                    type="button"
+                    onClick={() => setActivePhotoIndex(idx)}
+                    className={`w-12 h-12 rounded-xl overflow-hidden border-2 shrink-0 transition ${
+                      idx === activePhotoIndex
+                        ? "border-neutral-950"
+                        : "border-transparent opacity-60"
+                    }`}
+                  >
+                    <img src={url} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Full Title & Description */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2.5">
+              <div className="flex items-center gap-2">
+                {activeProduct.category && (
+                  <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
+                    {activeProduct.category}
+                  </span>
+                )}
+                <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium">
+                  {activeProduct.item_type === "service" ? "Услуга" : "Товар"}
+                </span>
+              </div>
+
+              <h2 className="text-xl font-bold text-neutral-950 leading-snug">
+                {activeProduct.name}
+              </h2>
+
+              <div className="text-xl font-extrabold text-neutral-950">
+                {formatKZT(activeProduct.price)}
+              </div>
+
+              {activeProduct.description ? (
+                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line pt-1">
+                  {activeProduct.description}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400 pt-1">
+                  Подробное описание не указано. Вы можете уточнить детали в чате компании.
+                </p>
+              )}
+            </div>
+
+            {/* Modal Bottom Action */}
+            <div className="p-4 border-t border-slate-100 bg-white shrink-0 flex items-center gap-2.5">
+              {(cart[activeProduct.id] || 0) > 0 ? (
+                <>
+                  <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(activeProduct.id)}
+                      className="w-9 h-9 rounded-lg bg-white flex items-center justify-center text-slate-700 shadow-sm"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="w-7 text-center text-sm font-bold">
+                      {cart[activeProduct.id]}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => addToCart(activeProduct)}
+                      className="w-9 h-9 rounded-lg bg-neutral-950 text-white flex items-center justify-center shadow-sm"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveProduct(null);
+                      setCheckoutOpen(true);
+                    }}
+                    className="flex-1 py-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold transition"
+                  >
+                    Перейти в корзину
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => addToCart(activeProduct)}
+                  className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition shadow-sm"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>
+                    {activeProduct.item_type === "service"
+                      ? `Заказать — ${formatKZT(activeProduct.price)}`
+                      : `В корзину — ${formatKZT(activeProduct.price)}`}
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CART & CHECKOUT MODAL */}
       {checkoutOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full max-w-lg max-h-[92vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
-            {/* Modal Header */}
+        <div
+          onClick={() => setCheckoutOpen(false)}
+          className="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-lg max-h-[92vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl"
+          >
             <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-neutral-950" />
@@ -654,11 +931,11 @@ export default function BusinessStorefrontPage() {
               </button>
             </div>
 
-            {/* Scrollable Body */}
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
               {cartItems.length === 0 ? (
-                <div className="text-center py-8 text-sm text-slate-500">
-                  Корзина пуста. Выберите товары или услуги на витрине.
+                <div className="text-center py-10 text-sm text-slate-500">
+                  Корзина пока пуста. Нажмите на значок корзины на карточке товара, чтобы
+                  добавить его.
                 </div>
               ) : (
                 <>
@@ -667,50 +944,53 @@ export default function BusinessStorefrontPage() {
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                       Выбранные позиции
                     </div>
-                    {cartItems.map((i) => (
-                      <div
-                        key={i.productId}
-                        className="flex items-center justify-between gap-2 text-sm bg-white p-2.5 rounded-xl border border-slate-200/80"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-medium text-neutral-950 truncate">
-                            {i.name}
+                    {cartItems.map((i) => {
+                      const prodObj = products.find((p) => p.id === i.productId);
+                      return (
+                        <div
+                          key={i.productId}
+                          className="flex items-center justify-between gap-2 text-sm bg-white p-2.5 rounded-xl border border-slate-200/80"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium text-neutral-950 truncate">
+                              {i.name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {formatKZT(i.price)} × {i.quantity} ={" "}
+                              <strong className="text-neutral-900">
+                                {formatKZT(i.price * i.quantity)}
+                              </strong>
+                            </div>
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {formatKZT(i.price)} × {i.quantity} ={" "}
-                            <strong className="text-neutral-900">
-                              {formatKZT(i.price * i.quantity)}
-                            </strong>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => removeFromCart(i.productId)}
+                              className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="w-5 text-center text-xs font-bold">
+                              {i.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => prodObj && addToCart(prodObj)}
+                              className="w-7 h-7 rounded-lg bg-neutral-950 text-white flex items-center justify-center"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteFromCart(i.productId)}
+                              className="p-1.5 text-slate-400 hover:text-red-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => removeFromCart(i.productId)}
-                            className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="w-5 text-center text-xs font-bold">
-                            {i.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => addToCart(i.productId)}
-                            className="w-7 h-7 rounded-lg bg-neutral-950 text-white flex items-center justify-center"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteFromCart(i.productId)}
-                            className="p-1.5 text-slate-400 hover:text-red-600"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="border-t border-slate-200 pt-2.5 flex justify-between items-center">
                       <span className="text-sm font-medium text-slate-600">Итого</span>
@@ -755,9 +1035,7 @@ export default function BusinessStorefrontPage() {
                                 <div className="text-sm font-semibold text-neutral-950">
                                   {opt.label}
                                 </div>
-                                <div className="text-[11px] text-slate-500">
-                                  {opt.hint}
-                                </div>
+                                <div className="text-[11px] text-slate-500">{opt.hint}</div>
                               </div>
                             </div>
                             <span
@@ -775,11 +1053,11 @@ export default function BusinessStorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Delivery / Receiving Method Selection */}
+                  {/* Delivery Method Selection */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
                       <Truck className="w-3.5 h-3.5" />
-                      Способ получения / Доставка
+                      Получение / Доставка
                     </div>
                     <div className="grid grid-cols-1 gap-2">
                       {DELIVERY_OPTIONS.map((opt) => {
@@ -816,11 +1094,23 @@ export default function BusinessStorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Client Contact Form */}
+                  {/* Contact & Delivery Address Form */}
                   <form id="checkout-form" onSubmit={handleCheckout} className="space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Ваши контакты
+                      Данные для заказа
                     </div>
+
+                    {deliveryMethod === "Доставка курьером" && (
+                      <input
+                        type="text"
+                        placeholder="Адрес доставки (улица, дом, кв / подъезд)"
+                        value={deliveryAddress}
+                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl border-2 border-neutral-900 text-sm focus:outline-none"
+                        required
+                      />
+                    )}
+
                     <input
                       type="text"
                       placeholder="Ваше имя"
@@ -839,11 +1129,7 @@ export default function BusinessStorefrontPage() {
                     />
                     <input
                       type="text"
-                      placeholder={
-                        deliveryMethod === "Доставка курьером"
-                          ? "Укажите адрес доставки и подъезд"
-                          : "Комментарий к заказу (время, пожелания)"
-                      }
+                      placeholder="Комментарий к заказу (время, пожелания)"
                       value={comment}
                       onChange={(e) => setComment(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
@@ -859,9 +1145,8 @@ export default function BusinessStorefrontPage() {
               )}
             </div>
 
-            {/* Modal Footer */}
             {cartItems.length > 0 && (
-              <div className="p-4 border-t border-slate-200 bg-white shrink-0 space-y-2">
+              <div className="p-4 border-t border-slate-200 bg-white shrink-0">
                 <button
                   type="submit"
                   form="checkout-form"
@@ -893,9 +1178,7 @@ export default function BusinessStorefrontPage() {
                   <h2 className="text-lg font-bold text-neutral-950">
                     Заказ {orderResult.orderCode} принят!
                   </h2>
-                  <p className="text-xs text-slate-500">
-                    Отправлен в «{business.name}»
-                  </p>
+                  <p className="text-xs text-slate-500">Отправлен в «{business.name}»</p>
                 </div>
               </div>
               <button
@@ -906,7 +1189,6 @@ export default function BusinessStorefrontPage() {
               </button>
             </div>
 
-            {/* Amount Box with Copy Button */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -938,7 +1220,6 @@ export default function BusinessStorefrontPage() {
               </div>
             </div>
 
-            {/* Kaspi Pay Direct Action */}
             {orderResult.paymentMethod === "Kaspi Pay" && hasKaspi && (
               <div className="space-y-2.5">
                 <a
@@ -956,12 +1237,11 @@ export default function BusinessStorefrontPage() {
                 <p className="text-[11px] text-slate-500 text-center leading-relaxed">
                   Нажмите кнопку, введите сумму{" "}
                   <strong>{formatKZT(orderResult.totalPrice)}</strong> в приложении Kaspi.kz
-                  и отправьте чек в WhatsApp компании для быстрого подтверждения.
+                  и отправьте чек в WhatsApp компании.
                 </p>
               </div>
             )}
 
-            {/* WhatsApp Receipt / Confirmation Button */}
             {waNumber && (
               <a
                 href={buildWhatsappReceiptUrl(orderResult)}
@@ -989,16 +1269,16 @@ export default function BusinessStorefrontPage() {
         </div>
       )}
 
-      {/* AI Chat Modal */}
+      {/* CHAT MODAL */}
       {chatOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full max-w-md h-[80vh] sm:h-[75vh] rounded-t-3xl sm:rounded-2xl flex flex-col overflow-hidden shadow-xl">
             <div className="px-4 py-3 bg-neutral-950 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5" />
-                <div>
-                  <div className="font-semibold text-sm">TIYIN AI</div>
-                  <div className="text-[11px] text-neutral-400">{business.name}</div>
+              <div className="flex items-center gap-2 min-w-0">
+                <Bot className="w-5 h-5 shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm truncate">{business.name}</div>
+                  <div className="text-[11px] text-emerald-400">Онлайн • TIYIN AI</div>
                 </div>
               </div>
               <button
@@ -1034,7 +1314,7 @@ export default function BusinessStorefrontPage() {
                 </div>
               ))}
               {chatLoading && (
-                <div className="text-xs text-slate-400">TIYIN AI печатает ответ...</div>
+                <div className="text-xs text-slate-400">Печатает ответ...</div>
               )}
             </div>
 

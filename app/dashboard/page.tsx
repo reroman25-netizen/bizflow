@@ -30,12 +30,22 @@ import {
   ArrowUpRight,
   CheckCircle2,
   X,
+  ImagePlus,
+  Upload,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-import { Business, Product, Order, ClientRecord, OrderStatus } from "@/lib/types";
+import {
+  Business,
+  Product,
+  ProductItemType,
+  Order,
+  ClientRecord,
+  OrderStatus,
+} from "@/lib/types";
 import { formatKZT, formatDate, slugify } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
 import { BUSINESS_CATEGORIES } from "@/lib/categories";
+import { uploadBusinessMedia } from "@/lib/uploadMedia";
 import { BrandLogo } from "@/components/BrandLogo";
 import { TiyinAiCenter } from "@/components/TiyinAiCenter";
 
@@ -68,7 +78,6 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [clients, setClients] = useState<ClientRecord[]>([]);
 
-  // Navigation state (Slide 2: Home screen by default + collapsible desktop rail + mobile bottom bar)
   const [activeTab, setActiveTab] = useState<MainTab>("home");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("menu");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -78,6 +87,9 @@ export default function DashboardPage() {
   const [origin, setOrigin] = useState("https://tiyin.kz");
   const [copied, setCopied] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingProdImg, setUploadingProdImg] = useState(false);
 
   // First-time business creation form
   const [createName, setCreateName] = useState("");
@@ -91,8 +103,11 @@ export default function DashboardPage() {
   // New product form
   const [newProdName, setNewProdName] = useState("");
   const [newProdPrice, setNewProdPrice] = useState("");
-  const [newProdCategory, setNewProdCategory] = useState("Услуги");
+  const [newProdCategory, setNewProdCategory] = useState("Основное");
   const [newProdDesc, setNewProdDesc] = useState("");
+  const [newProdType, setNewProdType] = useState<ProductItemType>("product");
+  const [newProdImageUrl, setNewProdImageUrl] = useState("");
+  const [newProdGallery, setNewProdGallery] = useState<string[]>([]);
 
   const loadBusinessData = useCallback(async (uid: string) => {
     const supabase = getSupabaseClient();
@@ -112,6 +127,8 @@ export default function DashboardPage() {
       ...(biz as Business),
       city: (biz as Business).city || "Алматы",
       category: (biz as Business).category || BUSINESS_CATEGORIES[0],
+      instagram: (biz as Business).instagram || "",
+      cover_url: (biz as Business).cover_url || "",
       kaspi_pay_link: (biz as Business).kaspi_pay_link || "",
       halyk_enabled: Boolean((biz as Business).halyk_enabled),
     };
@@ -180,6 +197,12 @@ export default function DashboardPage() {
   const openSettings = (sec: SettingsSection) => {
     setActiveTab("settings");
     setSettingsSection(sec);
+    setUploadError("");
+  };
+
+  const showNotice = (msg: string) => {
+    setSaveNotice(msg);
+    setTimeout(() => setSaveNotice(""), 3000);
   };
 
   const handleCreateBusiness = async (e: React.FormEvent) => {
@@ -237,15 +260,96 @@ export default function DashboardPage() {
         phone: business.phone,
         whatsapp: business.whatsapp,
         telegram: business.telegram,
+        instagram: (business.instagram || "").trim(),
+        cover_url: (business.cover_url || "").trim(),
         kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
         halyk_enabled: Boolean(business.halyk_enabled),
       })
       .eq("id", business.id);
 
     if (!error) {
-      setSaveNotice("Изменения сохранены и уже видны на витрине.");
-      setTimeout(() => setSaveNotice(""), 3000);
+      showNotice("Изменения сохранены и уже видны на витрине.");
     }
+  };
+
+  const handleUploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !business) return;
+    setUploadError("");
+    setUploadingCover(true);
+    const res = await uploadBusinessMedia({
+      businessId: business.id,
+      folder: "covers",
+      file,
+    });
+    setUploadingCover(false);
+    e.target.value = "";
+
+    if (res.error || !res.url) {
+      setUploadError(res.error || "Ошибка загрузки обложки.");
+      return;
+    }
+
+    const updated = { ...business, cover_url: res.url };
+    setBusiness(updated);
+    const supabase = getSupabaseClient();
+    await supabase
+      .from("businesses")
+      .update({ cover_url: res.url })
+      .eq("id", business.id);
+    showNotice("Обложка витрины обновлена!");
+  };
+
+  const handleRemoveCover = async () => {
+    if (!business) return;
+    setBusiness({ ...business, cover_url: "" });
+    const supabase = getSupabaseClient();
+    await supabase.from("businesses").update({ cover_url: "" }).eq("id", business.id);
+    showNotice("Установлена стандартная обложка TIYIN.");
+  };
+
+  const handleUploadProductPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !business) return;
+    setUploadError("");
+    setUploadingProdImg(true);
+    const res = await uploadBusinessMedia({
+      businessId: business.id,
+      folder: "products",
+      file,
+    });
+    setUploadingProdImg(false);
+    e.target.value = "";
+
+    if (res.error || !res.url) {
+      setUploadError(res.error || "Ошибка загрузки фото товара.");
+      return;
+    }
+    setNewProdImageUrl(res.url);
+  };
+
+  const handleUploadGalleryPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !business) return;
+    if (newProdGallery.length >= 4) {
+      setUploadError("Можно добавить до 4 дополнительных фото.");
+      return;
+    }
+    setUploadError("");
+    setUploadingProdImg(true);
+    const res = await uploadBusinessMedia({
+      businessId: business.id,
+      folder: "products",
+      file,
+    });
+    setUploadingProdImg(false);
+    e.target.value = "";
+
+    if (res.error || !res.url) {
+      setUploadError(res.error || "Ошибка загрузки дополнительного фото.");
+      return;
+    }
+    setNewProdGallery((prev) => [...prev, res.url!]);
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -261,8 +365,11 @@ export default function DashboardPage() {
         business_id: business.id,
         name: newProdName.trim(),
         price: priceNum,
-        category: newProdCategory.trim() || "Услуги",
+        category: newProdCategory.trim() || "Основное",
         description: newProdDesc.trim(),
+        item_type: newProdType,
+        image_url: newProdImageUrl.trim(),
+        gallery_urls: newProdGallery,
         is_available: true,
       })
       .select()
@@ -273,9 +380,10 @@ export default function DashboardPage() {
       setNewProdName("");
       setNewProdPrice("");
       setNewProdDesc("");
+      setNewProdImageUrl("");
+      setNewProdGallery([]);
       setAddProductOpen(false);
-      setSaveNotice("Позиция добавлена в каталог.");
-      setTimeout(() => setSaveNotice(""), 2500);
+      showNotice("Позиция добавлена в каталог.");
     }
   };
 
@@ -356,7 +464,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Первый вход — запуск бизнеса
   if (!business) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-[#F4F5F7]">
@@ -494,7 +601,10 @@ export default function DashboardPage() {
   const hasPaymentConfigured =
     Boolean(business.kaspi_pay_link?.trim()) || Boolean(business.halyk_enabled);
   const hasContactsConfigured = Boolean(
-    business.phone?.trim() || business.whatsapp?.trim() || business.telegram?.trim()
+    business.phone?.trim() ||
+      business.whatsapp?.trim() ||
+      business.telegram?.trim() ||
+      business.instagram?.trim()
   );
 
   const navItems: {
@@ -517,6 +627,7 @@ export default function DashboardPage() {
 
   const handleSelectMainTab = (tab: MainTab) => {
     setActiveTab(tab);
+    setUploadError("");
     if (tab === "settings") {
       setSettingsSection("menu");
     }
@@ -531,7 +642,6 @@ export default function DashboardPage() {
         }`}
       >
         <div className="p-3">
-          {/* Top Brand + Collapse/Expand Toggle */}
           <div
             className={`flex items-center mb-6 px-1 pt-1 ${
               sidebarExpanded ? "justify-between" : "flex-col gap-3"
@@ -561,7 +671,6 @@ export default function DashboardPage() {
             </button>
           </div>
 
-          {/* Company Mini Badge when expanded */}
           {sidebarExpanded && (
             <div className="mb-5 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
               <div className="font-bold text-sm text-neutral-950 truncate">
@@ -573,7 +682,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Main 5 Navigation Items */}
           <nav className="space-y-1.5">
             {navItems.map((item) => {
               const active = activeTab === item.id;
@@ -614,7 +722,6 @@ export default function DashboardPage() {
           </nav>
         </div>
 
-        {/* Bottom Actions */}
         <div className="p-3 border-t border-slate-100 space-y-1.5">
           <Link
             href={`/${business.slug}`}
@@ -642,7 +749,7 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      {/* MOBILE TOP APP BAR (Kaspi Pay style) */}
+      {/* MOBILE TOP APP BAR */}
       <header className="md:hidden bg-white/95 backdrop-blur border-b border-slate-200/80 px-4 h-14 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-2.5 min-w-0">
           <Link
@@ -680,12 +787,15 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ============================================================
-            TAB 1: HOME (SLIDE 2 — KASPI PAY STYLE MAIN SCREEN)
-           ============================================================ */}
+        {uploadError && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-2xl shadow-sm">
+            {uploadError}
+          </div>
+        )}
+
+        {/* TAB 1: HOME */}
         {activeTab === "home" && (
           <div className="space-y-5">
-            {/* Dark Balance / Revenue Card */}
             <div className="bg-neutral-950 text-white rounded-3xl p-5 sm:p-6 shadow-md space-y-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -737,7 +847,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* 4 Quick Action Tiles (Kaspi Pay style) */}
             <div className="grid grid-cols-4 gap-2.5 sm:gap-3">
               <button
                 type="button"
@@ -795,7 +904,6 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            {/* TIYIN AI Quick Promo / Status Strip */}
             <button
               type="button"
               onClick={() => setActiveTab("ai")}
@@ -817,7 +925,6 @@ export default function DashboardPage() {
               <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
             </button>
 
-            {/* Quick Setup Checklist (only shown if something is still missing) */}
             {(products.length === 0 || !hasPaymentConfigured || !hasContactsConfigured) && (
               <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-3">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -834,7 +941,7 @@ export default function DashboardPage() {
                       className="w-full flex items-center justify-between p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 transition text-left"
                     >
                       <span className="text-sm font-medium text-neutral-900">
-                        Добавьте первые товары или услуги
+                        Добавьте первые товары или услуги с фото
                       </span>
                       <ChevronRight className="w-4 h-4 text-slate-400" />
                     </button>
@@ -858,7 +965,7 @@ export default function DashboardPage() {
                       className="w-full flex items-center justify-between p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 transition text-left"
                     >
                       <span className="text-sm font-medium text-neutral-900">
-                        Укажите телефон, WhatsApp или Telegram
+                        Укажите Instagram, WhatsApp или телефон
                       </span>
                       <ChevronRight className="w-4 h-4 text-slate-400" />
                     </button>
@@ -867,7 +974,6 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Live Operations: Recent Orders */}
             <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-sm">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                 <h2 className="font-bold text-base text-neutral-950">Последние заказы</h2>
@@ -942,9 +1048,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ============================================================
-            TAB 2: ORDERS (UNIFIED FEED)
-           ============================================================ */}
+        {/* TAB 2: ORDERS */}
         {activeTab === "orders" && (
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1049,9 +1153,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ============================================================
-            TAB 3: TIYIN AI (SLIDE 4 DESIGN)
-           ============================================================ */}
+        {/* TAB 3: TIYIN AI */}
         {activeTab === "ai" && (
           <TiyinAiCenter
             accessToken={accessToken}
@@ -1060,9 +1162,7 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* ============================================================
-            TAB 4: CATALOG
-           ============================================================ */}
+        {/* TAB 4: CATALOG (WITH PHOTO UPLOAD & PRODUCT/SERVICE TOGGLE) */}
         {activeTab === "catalog" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
@@ -1085,15 +1185,123 @@ export default function DashboardPage() {
             {addProductOpen && (
               <form
                 onSubmit={handleAddProduct}
-                className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3"
+                className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4"
               >
                 <div className="font-bold text-sm text-neutral-950">
                   Новый товар или услуга
                 </div>
+
+                {/* Toggle Product vs Service */}
+                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setNewProdType("product")}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold transition ${
+                      newProdType === "product"
+                        ? "bg-white text-neutral-950 shadow-sm"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    Товар (кнопка «Купить»)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewProdType("service")}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold transition ${
+                      newProdType === "service"
+                        ? "bg-white text-neutral-950 shadow-sm"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    Услуга (кнопка «Заказать»)
+                  </button>
+                </div>
+
+                {/* Photo upload */}
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center shrink-0">
+                    {newProdImageUrl ? (
+                      <img
+                        src={newProdImageUrl}
+                        alt="Превью"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <ImagePlus className="w-6 h-6 text-slate-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-neutral-900 text-xs font-semibold cursor-pointer transition">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {uploadingProdImg
+                          ? "Загружаем фото..."
+                          : newProdImageUrl
+                          ? "Заменить фото"
+                          : "Загрузить фото с устройства"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleUploadProductPhoto}
+                        disabled={uploadingProdImg}
+                        className="hidden"
+                      />
+                    </label>
+                    <p className="text-[11px] text-slate-400">
+                      Основное фото (JPG, PNG, WebP до 5 МБ).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Extra gallery photos */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-slate-600">
+                      Дополнительные фото ({newProdGallery.length}/4)
+                    </span>
+                    {newProdGallery.length < 4 && (
+                      <label className="text-xs font-semibold text-blue-600 hover:underline cursor-pointer">
+                        + Добавить фото
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleUploadGalleryPhoto}
+                          disabled={uploadingProdImg}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                  {newProdGallery.length > 0 && (
+                    <div className="flex gap-2 flex-wrap">
+                      {newProdGallery.map((url, idx) => (
+                        <div
+                          key={url + idx}
+                          className="relative w-14 h-14 rounded-xl overflow-hidden border border-slate-200"
+                        >
+                          <img src={url} alt="" className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNewProdGallery((prev) =>
+                                prev.filter((_, i) => i !== idx)
+                              )
+                            }
+                            className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <input
                     type="text"
-                    placeholder="Название"
+                    placeholder="Название (напр. Пицца Пепперони)"
                     value={newProdName}
                     onChange={(e) => setNewProdName(e.target.value)}
                     className="px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
@@ -1109,7 +1317,7 @@ export default function DashboardPage() {
                   />
                   <input
                     type="text"
-                    placeholder="Категория (например: Букеты)"
+                    placeholder="Раздел каталога (напр. Пицца)"
                     value={newProdCategory}
                     onChange={(e) => setNewProdCategory(e.target.value)}
                     className="px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
@@ -1124,7 +1332,8 @@ export default function DashboardPage() {
                 />
                 <button
                   type="submit"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold transition"
+                  disabled={uploadingProdImg}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-sm font-semibold transition"
                 >
                   <Plus className="w-4 h-4" />
                   Сохранить в каталог
@@ -1151,16 +1360,36 @@ export default function DashboardPage() {
                     key={prod.id}
                     className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-neutral-950">{prod.name}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
-                          {prod.category}
-                        </span>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center shrink-0">
+                        {prod.image_url ? (
+                          <img
+                            src={prod.image_url}
+                            alt={prod.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Package className="w-5 h-5 text-slate-300" />
+                        )}
                       </div>
-                      {prod.description && (
-                        <p className="text-xs text-slate-500 mt-0.5">{prod.description}</p>
-                      )}
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-neutral-950 truncate">
+                            {prod.name}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                            {prod.category}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-medium">
+                            {prod.item_type === "service" ? "Услуга" : "Товар"}
+                          </span>
+                        </div>
+                        {prod.description && (
+                          <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                            {prod.description}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between sm:justify-end gap-3">
@@ -1193,22 +1422,66 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ============================================================
-            TAB 5: SETTINGS (CLEAN KASPI-STYLE GROUPED MENU)
-           ============================================================ */}
+        {/* TAB 5: SETTINGS */}
         {activeTab === "settings" && (
           <div className="space-y-4">
             {settingsSection === "menu" && (
               <>
                 <div>
-                  <h1 className="text-2xl font-bold text-neutral-950">Управление и настройки</h1>
+                  <h1 className="text-2xl font-bold text-neutral-950">
+                    Управление и настройки
+                  </h1>
                   <p className="text-xs sm:text-sm text-slate-500">
                     {business.name} • {business.city}
                   </p>
                 </div>
 
-                {/* Grouped Menu List */}
                 <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm divide-y divide-slate-100 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsSection("company")}
+                    className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition text-left"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <span className="w-10 h-10 rounded-2xl bg-slate-100 text-neutral-900 flex items-center justify-center shrink-0">
+                        <Building2 className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <div className="font-semibold text-sm text-neutral-950">
+                          О компании и обложка витрины
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {business.category} •{" "}
+                          {business.cover_url ? "Своя обложка" : "Стандартная обложка"}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettingsSection("contacts")}
+                    className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition text-left"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <span className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                        <Phone className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <div className="font-semibold text-sm text-neutral-950">
+                          Соцсети и контакты (Instagram, WhatsApp, Telegram)
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {[business.instagram, business.whatsapp, business.phone]
+                            .filter(Boolean)
+                            .join(" • ") || "Не заполнены"}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setSettingsSection("payments")}
@@ -1231,48 +1504,6 @@ export default function DashboardPage() {
                                 .filter(Boolean)
                                 .join(" • ")
                             : "Пока не подключено"}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSettingsSection("company")}
-                    className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition text-left"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <span className="w-10 h-10 rounded-2xl bg-slate-100 text-neutral-900 flex items-center justify-center shrink-0">
-                        <Building2 className="w-5 h-5" />
-                      </span>
-                      <div>
-                        <div className="font-semibold text-sm text-neutral-950">
-                          О компании и график работы
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {business.category} • {business.city}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSettingsSection("contacts")}
-                    className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition text-left"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <span className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                        <Phone className="w-5 h-5" />
-                      </span>
-                      <div>
-                        <div className="font-semibold text-sm text-neutral-950">
-                          Контакты (Телефон, WhatsApp, Telegram)
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {business.whatsapp || business.phone || "Не заполнены"}
                         </div>
                       </div>
                     </div>
@@ -1322,7 +1553,6 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                {/* Logout Button */}
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -1334,7 +1564,6 @@ export default function DashboardPage() {
               </>
             )}
 
-            {/* Back button for any settings sub-section */}
             {settingsSection !== "menu" && (
               <button
                 type="button"
@@ -1346,95 +1575,68 @@ export default function DashboardPage() {
               </button>
             )}
 
-            {/* SUB-SECTION: PAYMENTS */}
-            {settingsSection === "payments" && (
-              <form onSubmit={handleSaveBusiness} className="space-y-4 max-w-2xl">
-                <h1 className="text-2xl font-bold text-neutral-950">Подключение оплаты</h1>
-
-                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-xl bg-[#F14635] text-white font-extrabold text-sm flex items-center justify-center">
-                        K
-                      </span>
-                      <div>
-                        <div className="font-bold text-neutral-950">Kaspi Pay (ссылка QR)</div>
-                        <div className="text-xs text-slate-500">
-                          Значок Kaspi появится в шапке витрины и в корзине
-                        </div>
-                      </div>
-                    </div>
-                    <span
-                      className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        business.kaspi_pay_link?.trim()
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-slate-100 text-slate-500"
-                      }`}
-                    >
-                      {business.kaspi_pay_link?.trim() ? "Активен" : "Выкл"}
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Ссылка на ваш Kaspi Pay QR
-                    </label>
-                    <input
-                      type="url"
-                      value={business.kaspi_pay_link || ""}
-                      onChange={(e) =>
-                        setBusiness({ ...business, kaspi_pay_link: e.target.value })
-                      }
-                      placeholder="https://pay.kaspi.kz/pay/..."
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
-                    />
-                    <p className="text-[11px] text-slate-400 mt-1.5">
-                      Kaspi Pay → «Мой QR» → «Поделиться ссылкой». Оставьте пустым, чтобы
-                      скрыть значок Kaspi.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-xl bg-[#00805F] text-white font-extrabold text-sm flex items-center justify-center">
-                        H
-                      </span>
-                      <div>
-                        <div className="font-bold text-neutral-950">Halyk Bank / ePay</div>
-                        <div className="text-xs text-slate-500">
-                          Отображать значок Halyk на витрине (API ePay скоро)
-                        </div>
-                      </div>
-                    </div>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(business.halyk_enabled)}
-                        onChange={(e) =>
-                          setBusiness({ ...business, halyk_enabled: e.target.checked })
-                        }
-                        className="w-5 h-5 rounded border-slate-300 accent-neutral-950"
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
-                >
-                  <Save className="w-4 h-4" />
-                  Сохранить способы оплаты
-                </button>
-              </form>
-            )}
-
-            {/* SUB-SECTION: COMPANY */}
+            {/* SUB-SECTION: COMPANY & COVER IMAGE */}
             {settingsSection === "company" && (
               <form onSubmit={handleSaveBusiness} className="space-y-4 max-w-2xl">
-                <h1 className="text-2xl font-bold text-neutral-950">О компании и услугах</h1>
+                <h1 className="text-2xl font-bold text-neutral-950">
+                  О компании и обложка
+                </h1>
+
+                {/* Cover Upload Card */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+                  <div className="font-semibold text-sm text-neutral-950">
+                    Обложка вашей витрины
+                  </div>
+                  <div
+                    className="relative h-36 rounded-2xl overflow-hidden border border-slate-200 flex items-end p-4"
+                    style={
+                      business.cover_url
+                        ? {
+                            backgroundImage: `url(${business.cover_url})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                          }
+                        : {
+                            background:
+                              "radial-gradient(circle at 80% 20%, #2b3448 0%, #111318 65%, #090a0d 100%)",
+                          }
+                    }
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+                    <div className="relative z-10 text-white">
+                      <div className="font-bold text-lg leading-tight">{business.name}</div>
+                      <div className="text-xs text-white/75">{business.category}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold cursor-pointer transition">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {uploadingCover ? "Загружаем..." : "Загрузить свою обложку"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleUploadCover}
+                        disabled={uploadingCover}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {business.cover_url && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveCover}
+                        className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Вернуть стандартную
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Text Profile Fields */}
                 <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
@@ -1507,7 +1709,7 @@ export default function DashboardPage() {
                       Подробное описание услуг
                     </label>
                     <textarea
-                      rows={4}
+                      rows={3}
                       value={business.services_description}
                       onChange={(e) =>
                         setBusiness({ ...business, services_description: e.target.value })
@@ -1558,20 +1760,26 @@ export default function DashboardPage() {
               </form>
             )}
 
-            {/* SUB-SECTION: CONTACTS */}
+            {/* SUB-SECTION: CONTACTS & SOCIALS */}
             {settingsSection === "contacts" && (
               <form onSubmit={handleSaveBusiness} className="space-y-4 max-w-xl">
-                <h1 className="text-2xl font-bold text-neutral-950">Контакты для клиентов</h1>
+                <h1 className="text-2xl font-bold text-neutral-950">Соцсети и контакты</h1>
+                <p className="text-xs text-slate-500">
+                  Заполненные поля автоматически появятся красивыми кнопками под обложкой
+                  вашей витрины.
+                </p>
                 <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Телефон для звонков
+                      Instagram (ник или ссылка)
                     </label>
                     <input
-                      type="tel"
-                      value={business.phone}
-                      onChange={(e) => setBusiness({ ...business, phone: e.target.value })}
-                      placeholder="+7 707 123 45 67"
+                      type="text"
+                      value={business.instagram || ""}
+                      onChange={(e) =>
+                        setBusiness({ ...business, instagram: e.target.value })
+                      }
+                      placeholder="@maks_auto_kz или https://instagram.com/..."
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                     />
                   </div>
@@ -1599,6 +1807,18 @@ export default function DashboardPage() {
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Телефон для звонков
+                    </label>
+                    <input
+                      type="tel"
+                      value={business.phone}
+                      onChange={(e) => setBusiness({ ...business, phone: e.target.value })}
+                      placeholder="+7 707 123 45 67"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                    />
+                  </div>
                   <button
                     type="submit"
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
@@ -1607,6 +1827,87 @@ export default function DashboardPage() {
                     Сохранить контакты
                   </button>
                 </div>
+              </form>
+            )}
+
+            {/* SUB-SECTION: PAYMENTS */}
+            {settingsSection === "payments" && (
+              <form onSubmit={handleSaveBusiness} className="space-y-4 max-w-2xl">
+                <h1 className="text-2xl font-bold text-neutral-950">Подключение оплаты</h1>
+
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-10 h-10 rounded-xl bg-[#F14635] text-white font-extrabold text-sm flex items-center justify-center">
+                        K
+                      </span>
+                      <div>
+                        <div className="font-bold text-neutral-950">Kaspi Pay (ссылка QR)</div>
+                        <div className="text-xs text-slate-500">
+                          Появится как способ оплаты при оформлении в корзине
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        business.kaspi_pay_link?.trim()
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {business.kaspi_pay_link?.trim() ? "Активен" : "Выкл"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Ссылка на ваш Kaspi Pay QR
+                    </label>
+                    <input
+                      type="url"
+                      value={business.kaspi_pay_link || ""}
+                      onChange={(e) =>
+                        setBusiness({ ...business, kaspi_pay_link: e.target.value })
+                      }
+                      placeholder="https://pay.kaspi.kz/pay/..."
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-10 h-10 rounded-xl bg-[#00805F] text-white font-extrabold text-sm flex items-center justify-center">
+                        H
+                      </span>
+                      <div>
+                        <div className="font-bold text-neutral-950">Halyk Bank / ePay</div>
+                        <div className="text-xs text-slate-500">
+                          Отображать в списке способов оплаты в корзине
+                        </div>
+                      </div>
+                    </div>
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(business.halyk_enabled)}
+                        onChange={(e) =>
+                          setBusiness({ ...business, halyk_enabled: e.target.checked })
+                        }
+                        className="w-5 h-5 rounded border-slate-300 accent-neutral-950"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
+                >
+                  <Save className="w-4 h-4" />
+                  Сохранить способы оплаты
+                </button>
               </form>
             )}
 
@@ -1710,7 +2011,7 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* MOBILE BOTTOM NAVIGATION BAR (SLIDE 2 KASPI PAY STYLE) */}
+      {/* MOBILE BOTTOM NAVIGATION BAR */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 px-2 pt-1.5 pb-2 z-30">
         <div className="grid grid-cols-5 gap-1 max-w-md mx-auto">
           {navItems.map((item) => {

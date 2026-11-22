@@ -2,6 +2,8 @@ export type UserRole = "client" | "business" | "admin";
 
 export type ChannelType = "web" | "whatsapp" | "instagram" | "telegram";
 
+export type ProductItemType = "product" | "service";
+
 export interface Profile {
   id: string;
   email: string | null;
@@ -23,6 +25,8 @@ export interface Business {
   phone: string;
   whatsapp: string;
   telegram: string;
+  instagram?: string;
+  cover_url?: string;
   kaspi_pay_link?: string;
   halyk_enabled?: boolean;
   is_active: boolean;
@@ -61,6 +65,9 @@ export interface Product {
   description: string;
   price: number;
   category: string;
+  image_url?: string;
+  gallery_urls?: string[];
+  item_type?: ProductItemType;
   is_available: boolean;
 }
 
