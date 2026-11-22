@@ -31,6 +31,7 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, Product } from "@/lib/types";
 import { formatKZT, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
 import { BrandLogo } from "@/components/BrandLogo";
+import { PwaInstallButton } from "@/components/PwaInstallButton";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -534,7 +535,7 @@ export default function BusinessStorefrontPage() {
 
         {/* GREEN ZONE: SOCIAL LINKS & CONTACTS (ONLY IF CONFIGURED BY BUSINESS) */}
         <div className="px-3 sm:px-4 pt-3.5 space-y-2.5">
-          {hasSocialLinks && (
+          {(hasSocialLinks || business.pwa_enabled !== false) && (
             <div className="flex flex-wrap gap-2">
               {instagramUrl && (
                 <a
@@ -578,6 +579,11 @@ export default function BusinessStorefrontPage() {
                   Позвонить
                 </a>
               )}
+              <PwaInstallButton
+                businessName={business.name}
+                logoUrl={business.logo_url}
+                pwaEnabled={business.pwa_enabled !== false}
+              />
             </div>
           )}
 

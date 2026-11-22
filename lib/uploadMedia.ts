@@ -5,7 +5,7 @@ const MAX_FILE_SIZE_MB = 5;
 
 export async function uploadBusinessMedia(params: {
   businessId: string;
-  folder: "covers" | "products";
+  folder: "covers" | "products" | "logos";
   file: File;
 }): Promise<{ url?: string; error?: string }> {
   const { businessId, folder, file } = params;

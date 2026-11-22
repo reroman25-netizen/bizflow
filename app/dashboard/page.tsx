@@ -90,6 +90,7 @@ export default function DashboardPage() {
   const [saveNotice, setSaveNotice] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingProdImg, setUploadingProdImg] = useState(false);
 
   // First-time business creation form
@@ -130,6 +131,8 @@ export default function DashboardPage() {
       category: (biz as Business).category || BUSINESS_CATEGORIES[0],
       instagram: (biz as Business).instagram || "",
       cover_url: (biz as Business).cover_url || "",
+      logo_url: (biz as Business).logo_url || "",
+      pwa_enabled: (biz as Business).pwa_enabled ?? true,
       kaspi_pay_link: (biz as Business).kaspi_pay_link || "",
       halyk_enabled: Boolean((biz as Business).halyk_enabled),
     };
@@ -268,6 +271,7 @@ export default function DashboardPage() {
         telegram: business.telegram,
         instagram: (business.instagram || "").trim(),
         cover_url: (business.cover_url || "").trim(),
+        logo_url: (business.logo_url || "").trim(),
         kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
         halyk_enabled: Boolean(business.halyk_enabled),
       })
@@ -312,6 +316,42 @@ export default function DashboardPage() {
     const supabase = getSupabaseClient();
     await supabase.from("businesses").update({ cover_url: "" }).eq("id", business.id);
     showNotice("Установлена стандартная обложка TIYIN.");
+  };
+
+  const handleUploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !business) return;
+    setUploadError("");
+    setUploadingLogo(true);
+    const res = await uploadBusinessMedia({
+      businessId: business.id,
+      folder: "logos",
+      file,
+    });
+    setUploadingLogo(false);
+    e.target.value = "";
+
+    if (res.error || !res.url) {
+      setUploadError(res.error || "Ошибка загрузки логотипа.");
+      return;
+    }
+
+    const updated = { ...business, logo_url: res.url };
+    setBusiness(updated);
+    const supabase = getSupabaseClient();
+    await supabase
+      .from("businesses")
+      .update({ logo_url: res.url })
+      .eq("id", business.id);
+    showNotice("Логотип приложения обновлен!");
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!business) return;
+    setBusiness({ ...business, logo_url: "" });
+    const supabase = getSupabaseClient();
+    await supabase.from("businesses").update({ logo_url: "" }).eq("id", business.id);
+    showNotice("Логотип удален (будет использоваться стандартная иконка TIYIN).");
   };
 
   const handleUploadProductPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1455,7 +1495,7 @@ export default function DashboardPage() {
                       </span>
                       <div>
                         <div className="font-semibold text-sm text-neutral-950">
-                          О компании и обложка витрины
+                          О компании, логотип и обложка витрины
                         </div>
                         <div className="text-xs text-slate-500">
                           {business.category} •{" "}
@@ -1638,6 +1678,62 @@ export default function DashboardPage() {
                         className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
                       >
                         Вернуть стандартную
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Logo Upload Card (PWA App Icon) */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="font-semibold text-sm text-neutral-950">
+                        Логотип (иконка приложения)
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Квадратное изображение (рекомендуем 512×512 px, PNG или JPG до 5 МБ).
+                        Отображается на главном экране телефона клиента при установке вашей витрины.
+                      </p>
+                    </div>
+                    <div className="w-16 h-16 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
+                      {business.logo_url ? (
+                        <img
+                          src={business.logo_url}
+                          alt="Логотип бизнеса"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <ImagePlus className="w-6 h-6 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold cursor-pointer transition">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {uploadingLogo
+                          ? "Загружаем..."
+                          : business.logo_url
+                          ? "Заменить логотип"
+                          : "Загрузить логотип"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleUploadLogo}
+                        disabled={uploadingLogo}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {business.logo_url && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveLogo}
+                        className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Удалить логотип
                       </button>
                     )}
                   </div>

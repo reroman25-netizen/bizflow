@@ -27,6 +27,8 @@ export interface Business {
   telegram: string;
   instagram?: string;
   cover_url?: string;
+  logo_url?: string;
+  pwa_enabled?: boolean;
   kaspi_pay_link?: string;
   halyk_enabled?: boolean;
   is_active: boolean;
