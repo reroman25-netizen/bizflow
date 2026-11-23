@@ -4,6 +4,8 @@ export type ChannelType = "web" | "whatsapp" | "instagram" | "telegram";
 
 export type ProductItemType = "product" | "service";
 
+export type StorefrontTemplate = "shop" | "services";
+
 export interface Profile {
   id: string;
   email: string | null;
@@ -32,6 +34,7 @@ export interface Business {
   logo_url?: string;
   pwa_short_name?: string;
   pwa_enabled?: boolean;
+  storefront_template?: StorefrontTemplate;
   plan_tier?: "base" | "ai_autopilot";
   trial_ends_at?: string | null;
   paid_until?: string | null;
@@ -77,6 +80,7 @@ export interface Product {
   image_url?: string;
   gallery_urls?: string[];
   item_type?: ProductItemType;
+  duration_label?: string;
   is_available: boolean;
 }
 

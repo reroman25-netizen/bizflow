@@ -41,6 +41,7 @@ import {
   Order,
   ClientRecord,
   OrderStatus,
+  StorefrontTemplate,
 } from "@/lib/types";
 import { formatKZT, formatDate, slugify } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
@@ -117,6 +118,7 @@ export default function DashboardPage() {
   const [newProdCategory, setNewProdCategory] = useState("Основное");
   const [newProdDesc, setNewProdDesc] = useState("");
   const [newProdType, setNewProdType] = useState<ProductItemType>("product");
+  const [newProdDuration, setNewProdDuration] = useState("");
   const [newProdImageUrl, setNewProdImageUrl] = useState("");
   const [newProdGallery, setNewProdGallery] = useState<string[]>([]);
 
@@ -143,6 +145,8 @@ export default function DashboardPage() {
       logo_url: (biz as Business).logo_url || "",
       pwa_short_name: (biz as Business).pwa_short_name || "",
       pwa_enabled: (biz as Business).pwa_enabled ?? true,
+      storefront_template:
+        (biz as Business).storefront_template === "services" ? "services" : "shop",
       plan_tier: (biz as Business).plan_tier || "base",
       trial_ends_at: (biz as Business).trial_ends_at || null,
       paid_until: (biz as Business).paid_until || null,
@@ -305,6 +309,7 @@ export default function DashboardPage() {
         cover_url: (business.cover_url || "").trim(),
         logo_url: (business.logo_url || "").trim(),
         pwa_short_name: (business.pwa_short_name || "").trim().slice(0, 12),
+        storefront_template: business.storefront_template || "shop",
         kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
         halyk_enabled: Boolean(business.halyk_enabled),
       })
@@ -401,6 +406,28 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSelectStorefrontTemplate = async (tpl: StorefrontTemplate) => {
+    if (!business) return;
+    setBusiness({ ...business, storefront_template: tpl });
+    if (tpl === "services") {
+      setNewProdType("service");
+    } else {
+      setNewProdType("product");
+    }
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("businesses")
+      .update({ storefront_template: tpl })
+      .eq("id", business.id);
+    if (!error) {
+      showNotice(
+        tpl === "services"
+          ? "Включён шаблон «Услуги и запись»!"
+          : "Включён шаблон «Магазин / Еда»!"
+      );
+    }
+  };
+
   const handleUploadProductPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !business) return;
@@ -461,6 +488,7 @@ export default function DashboardPage() {
         category: newProdCategory.trim() || "Основное",
         description: newProdDesc.trim(),
         item_type: newProdType,
+        duration_label: newProdDuration.trim(),
         image_url: newProdImageUrl.trim(),
         gallery_urls: newProdGallery,
         is_available: true,
@@ -473,6 +501,7 @@ export default function DashboardPage() {
       setNewProdName("");
       setNewProdPrice("");
       setNewProdDesc("");
+      setNewProdDuration("");
       setNewProdImageUrl("");
       setNewProdGallery([]);
       setAddProductOpen(false);
@@ -1467,6 +1496,15 @@ export default function DashboardPage() {
                     className="px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                   />
                 </div>
+                {newProdType === "service" && (
+                  <input
+                    type="text"
+                    placeholder="Длительность услуги (напр. 45 мин, 1 час — необязательно)"
+                    value={newProdDuration}
+                    onChange={(e) => setNewProdDuration(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                  />
+                )}
                 <input
                   type="text"
                   placeholder="Краткое описание (необязательно)"
@@ -1527,6 +1565,11 @@ export default function DashboardPage() {
                           <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-medium">
                             {prod.item_type === "service" ? "Услуга" : "Товар"}
                           </span>
+                          {prod.duration_label && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium">
+                              {prod.duration_label}
+                            </span>
+                          )}
                         </div>
                         {prod.description && (
                           <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
@@ -1837,6 +1880,68 @@ export default function DashboardPage() {
                 <h1 className="text-2xl font-bold text-neutral-950">
                   О компании и обложка
                 </h1>
+
+                {/* Storefront Template Selector Card */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+                  <div>
+                    <div className="font-semibold text-sm text-neutral-950">
+                      Формат витрины
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Выберите внешний вид витрины под ваш тип бизнеса. Переключается мгновенно.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectStorefrontTemplate("shop")}
+                      className={`text-left p-3.5 rounded-2xl border-2 transition ${
+                        (business.storefront_template || "shop") === "shop"
+                          ? "border-neutral-950 bg-neutral-50"
+                          : "border-slate-200 hover:border-slate-300 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-sm text-neutral-950">
+                          Магазин / Еда
+                        </span>
+                        {(business.storefront_template || "shop") === "shop" && (
+                          <span className="px-2 py-0.5 rounded-full bg-neutral-950 text-white text-[10px] font-semibold">
+                            Активен
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        Сетка карточек с фото, корзина, самовывоз и доставка.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelectStorefrontTemplate("services")}
+                      className={`text-left p-3.5 rounded-2xl border-2 transition ${
+                        business.storefront_template === "services"
+                          ? "border-neutral-950 bg-neutral-50"
+                          : "border-slate-200 hover:border-slate-300 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-sm text-neutral-950">
+                          Услуги и запись
+                        </span>
+                        {business.storefront_template === "services" && (
+                          <span className="px-2 py-0.5 rounded-full bg-neutral-950 text-white text-[10px] font-semibold">
+                            Активен
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        Чистый прайс-лист с длительностью и быстрой записью на дату и время.
+                      </p>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Cover Upload Card */}
                 <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
