@@ -141,6 +141,7 @@ export default function DashboardPage() {
       instagram: (biz as Business).instagram || "",
       cover_url: (biz as Business).cover_url || "",
       logo_url: (biz as Business).logo_url || "",
+      pwa_short_name: (biz as Business).pwa_short_name || "",
       pwa_enabled: (biz as Business).pwa_enabled ?? true,
       plan_tier: (biz as Business).plan_tier || "base",
       trial_ends_at: (biz as Business).trial_ends_at || null,
@@ -303,6 +304,7 @@ export default function DashboardPage() {
         instagram: (business.instagram || "").trim(),
         cover_url: (business.cover_url || "").trim(),
         logo_url: (business.logo_url || "").trim(),
+        pwa_short_name: (business.pwa_short_name || "").trim().slice(0, 12),
         kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
         halyk_enabled: Boolean(business.halyk_enabled),
       })
@@ -382,7 +384,21 @@ export default function DashboardPage() {
     setBusiness({ ...business, logo_url: "" });
     const supabase = getSupabaseClient();
     await supabase.from("businesses").update({ logo_url: "" }).eq("id", business.id);
-    showNotice("Логотип удален (будет использоваться стандартная иконка TIYIN).");
+    showNotice("Логотип удален (будет использоваться иконка с инициалами бизнеса).");
+  };
+
+  const handleSavePwaShortName = async () => {
+    if (!business) return;
+    const cleanShort = (business.pwa_short_name || "").trim().slice(0, 12);
+    setBusiness({ ...business, pwa_short_name: cleanShort });
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("businesses")
+      .update({ pwa_short_name: cleanShort })
+      .eq("id", business.id);
+    if (!error) {
+      showNotice("Короткое имя приложения сохранено!");
+    }
   };
 
   const handleUploadProductPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1876,28 +1892,42 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Logo Upload Card (PWA App Icon) */}
-                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3">
+                {/* Logo Upload Card (PWA App Icon & Short Name) */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="font-semibold text-sm text-neutral-950">
-                        Логотип (иконка приложения)
+                        Иконка и имя приложения (PWA)
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Квадратное изображение (рекомендуем 512×512 px, PNG или JPG до 5 МБ).
-                        Отображается на главном экране телефона клиента при установке вашей витрины.
+                        Загрузите квадратный логотип (PNG или JPG, лучше 512×512 px) и укажите
+                        короткое название — именно так ваше приложение будет выглядеть на главном
+                        экране телефона клиента.
                       </p>
                     </div>
-                    <div className="w-16 h-16 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
-                      {business.logo_url ? (
-                        <img
-                          src={business.logo_url}
-                          alt="Логотип бизнеса"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <ImagePlus className="w-6 h-6 text-slate-400" />
-                      )}
+
+                    {/* Live App Icon Preview */}
+                    <div className="flex flex-col items-center gap-1.5 shrink-0">
+                      <div className="w-16 h-16 rounded-[18px] border border-slate-200 bg-neutral-950 overflow-hidden flex items-center justify-center shadow-sm">
+                        {business.logo_url ? (
+                          <img
+                            src={business.logo_url}
+                            alt="Логотип бизнеса"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-white font-extrabold text-lg tracking-tight">
+                            {(business.pwa_short_name || business.name || "TS")
+                              .trim()
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-medium text-neutral-800 max-w-[76px] truncate text-center leading-tight">
+                        {(business.pwa_short_name || "").trim() ||
+                          business.name.slice(0, 12)}
+                      </span>
                     </div>
                   </div>
 
@@ -1913,7 +1943,7 @@ export default function DashboardPage() {
                       </span>
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/png,image/jpeg,image/webp"
                         onChange={handleUploadLogo}
                         disabled={uploadingLogo}
                         className="hidden"
@@ -1929,6 +1959,42 @@ export default function DashboardPage() {
                         Удалить логотип
                       </button>
                     )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-medium text-slate-600">
+                        Короткое имя под иконкой на телефоне
+                      </label>
+                      <span className="text-[11px] text-slate-400">
+                        {(business.pwa_short_name || "").length}/12
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        maxLength={12}
+                        value={business.pwa_short_name || ""}
+                        onChange={(e) =>
+                          setBusiness({
+                            ...business,
+                            pwa_short_name: e.target.value.slice(0, 12),
+                          })
+                        }
+                        placeholder="Например: MAKS"
+                        className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSavePwaShortName}
+                        className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-neutral-900 text-xs font-semibold transition shrink-0"
+                      >
+                        Сохранить
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      До 12 символов, чтобы название не обрезалось на экране телефона (вместо «MAKS замена масла» — просто «MAKS»).
+                    </p>
                   </div>
                 </div>
 

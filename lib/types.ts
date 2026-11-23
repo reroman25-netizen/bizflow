@@ -30,6 +30,7 @@ export interface Business {
   instagram?: string;
   cover_url?: string;
   logo_url?: string;
+  pwa_short_name?: string;
   pwa_enabled?: boolean;
   plan_tier?: "base" | "ai_autopilot";
   trial_ends_at?: string | null;
