@@ -9,6 +9,8 @@ export interface Profile {
   email: string | null;
   full_name: string;
   role: UserRole;
+  telegram_id?: string | null;
+  telegram_username?: string;
 }
 
 export interface Business {

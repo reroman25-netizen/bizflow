@@ -6,6 +6,11 @@ import Link from "next/link";
 import { Building2, User, ArrowLeft, Mail, Lock, CheckCircle2 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { BrandLogo } from "@/components/BrandLogo";
+import {
+  TelegramAuthButton,
+  TelegramAuthResult,
+} from "@/components/TelegramAuthButton";
+import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
 
 function AuthForm() {
   const router = useRouter();
@@ -21,6 +26,50 @@ function AuthForm() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+
+  const handleTelegramSuccess = async (result: TelegramAuthResult) => {
+    if (!result.token_hash) {
+      setErrorMsg("Не удалось завершить вход через Telegram.");
+      return;
+    }
+    setErrorMsg("");
+    setInfoMsg("");
+    setLoading(true);
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: result.token_hash,
+        type: "magiclink",
+      });
+
+      if (error || !data.session) {
+        setErrorMsg(error?.message || "Не удалось создать сессию входа.");
+        setLoading(false);
+        return;
+      }
+
+      const checkRes = await fetch("/api/admin/check", {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      if (checkRes.ok) {
+        const checkJson = await checkRes.json();
+        if (checkJson.isAdmin) {
+          router.push("/admin");
+          return;
+        }
+      }
+
+      if (result.role === "client") {
+        router.push("/");
+      } else {
+        router.push("/dashboard");
+      }
+    } catch {
+      setErrorMsg("Ошибка соединения при входе через Telegram.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,6 +168,7 @@ function AuthForm() {
 
   return (
     <div className="min-h-screen bg-[#FAFAFB] flex flex-col justify-center items-center px-4 py-10">
+      <TelegramMiniAppInit />
       <div className="w-full max-w-md">
         <div className="flex items-center justify-between mb-6">
           <Link href="/">
@@ -187,6 +237,22 @@ function AuthForm() {
               </p>
             </div>
           )}
+
+          <div className="mb-5 space-y-3">
+            <TelegramAuthButton
+              roleMode={roleMode}
+              action="login"
+              onSuccess={handleTelegramSuccess}
+              onError={(msg) => setErrorMsg(msg)}
+            />
+            <div className="relative flex items-center py-1">
+              <div className="flex-grow border-t border-slate-200" />
+              <span className="mx-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                или по почте
+              </span>
+              <div className="flex-grow border-t border-slate-200" />
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {authTab === "register" && (

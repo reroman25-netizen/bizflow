@@ -55,6 +55,7 @@ import {
 import { BrandLogo } from "@/components/BrandLogo";
 import { TiyinAiCenter } from "@/components/TiyinAiCenter";
 import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
+import { TelegramAuthButton } from "@/components/TelegramAuthButton";
 
 type MainTab = "home" | "orders" | "ai" | "catalog" | "settings";
 type SettingsSection = "menu" | "company" | "payments" | "contacts" | "clients" | "share";
@@ -79,6 +80,8 @@ export default function DashboardPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string>("");
   const [accessDenied, setAccessDenied] = useState(false);
+  const [linkedTelegramId, setLinkedTelegramId] = useState<string | null>(null);
+  const [linkedTelegramUsername, setLinkedTelegramUsername] = useState<string>("");
 
   const [business, setBusiness] = useState<Business | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -195,9 +198,14 @@ export default function DashboardPage() {
 
       const { data: prof } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, telegram_id, telegram_username")
         .eq("id", user.id)
         .maybeSingle();
+
+      if (prof?.telegram_id) {
+        setLinkedTelegramId(String(prof.telegram_id));
+        setLinkedTelegramUsername(String(prof.telegram_username || ""));
+      }
 
       if (prof && prof.role === "client") {
         setAccessDenied(true);
@@ -256,6 +264,19 @@ export default function DashboardPage() {
       }
       setCreating(false);
       return;
+    }
+
+    if (linkedTelegramId && accessToken) {
+      await fetch("/api/dashboard/ai-center", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          ownerTelegramChatId: linkedTelegramId,
+        }),
+      }).catch(() => {});
     }
 
     await loadBusinessData(userId);
@@ -1725,6 +1746,51 @@ export default function DashboardPage() {
                     </div>
                     <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
                   </button>
+                </div>
+
+                {/* Telegram Auth Link Card */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-sm text-neutral-950">
+                        Вход через Telegram
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {linkedTelegramId
+                          ? `Привязан: ${
+                              linkedTelegramUsername
+                                ? `@${linkedTelegramUsername}`
+                                : `ID ${linkedTelegramId}`
+                            } · уведомления подключены`
+                          : "Привяжите Telegram, чтобы входить в 1 клик и получать заказы автоматически"}
+                      </div>
+                    </div>
+                    {linkedTelegramId && (
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold shrink-0">
+                        Привязан
+                      </span>
+                    )}
+                  </div>
+
+                  {!linkedTelegramId && (
+                    <div className="pt-1">
+                      <TelegramAuthButton
+                        action="link"
+                        accessToken={accessToken}
+                        label="Привязать Telegram к кабинету"
+                        onSuccess={(res) => {
+                          if (res.telegram_id) {
+                            setLinkedTelegramId(res.telegram_id);
+                            setLinkedTelegramUsername(res.telegram_username || "");
+                            showNotice(
+                              "Telegram привязан! Теперь можно входить в 1 клик, а заказы будут приходить в ваш Telegram."
+                            );
+                          }
+                        }}
+                        onError={(msg) => setUploadError(msg)}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <button
