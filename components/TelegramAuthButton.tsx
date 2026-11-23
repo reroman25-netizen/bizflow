@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 
-interface TelegramWebAppWindow extends Window {
+interface TelegramWebAppWindow {
   Telegram?: {
     WebApp?: {
       initData?: string;
@@ -66,7 +66,7 @@ export function TelegramAuthButton({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const win = window as TelegramWebAppWindow;
+    const win = window as unknown as TelegramWebAppWindow;
     const initData = win.Telegram?.WebApp?.initData || "";
     if (initData) {
       win.Telegram?.WebApp?.ready?.();
