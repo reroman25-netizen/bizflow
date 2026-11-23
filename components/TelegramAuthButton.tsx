@@ -32,7 +32,7 @@ interface TelegramAuthButtonProps {
 }
 
 const DEFAULT_BOT_USERNAME = (
-  process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "Tiyinapp"
+  process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "tiyinapp_bot"
 )
   .replace(/^@/, "")
   .trim();
