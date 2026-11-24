@@ -6,6 +6,8 @@ export type ProductItemType = "product" | "service";
 
 export type StorefrontTemplate = "shop" | "services";
 
+export type ProductBadge = "hit" | "new" | "in_stock" | "discount";
+
 export interface Profile {
   id: string;
   email: string | null;
@@ -35,6 +37,7 @@ export interface Business {
   pwa_short_name?: string;
   pwa_enabled?: boolean;
   storefront_template?: StorefrontTemplate;
+  brand_color?: string;
   plan_tier?: "base" | "ai_autopilot";
   trial_ends_at?: string | null;
   paid_until?: string | null;
@@ -84,6 +87,9 @@ export interface Product {
   gallery_urls?: string[];
   item_type?: ProductItemType;
   duration_label?: string;
+  old_price?: number | null;
+  cashback_percent?: number;
+  badges?: ProductBadge[] | string[];
   is_available: boolean;
 }
 
@@ -194,4 +200,28 @@ export interface PaymentSettingsPublic {
   freedom_merchant_id: string;
   freedom_has_secret: boolean;
   freedom_test_mode: boolean;
+}
+
+export interface BusinessSlide {
+  id: string;
+  business_id: string;
+  media_url: string;
+  media_type: "image" | "video";
+  title: string;
+  subtitle: string;
+  badge_text: string;
+  link_category: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface BusinessCategory {
+  id: string;
+  business_id: string;
+  name: string;
+  image_url: string;
+  icon_key: string;
+  sort_order: number;
+  created_at?: string;
 }

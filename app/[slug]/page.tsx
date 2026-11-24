@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -29,14 +29,29 @@ import {
   Menu,
   Calendar,
   Sparkles,
-  Tag,
   Upload,
   FileText,
   ShieldCheck,
+  Store,
+  LayoutGrid,
+  ClipboardList,
+  Search,
+  Volume2,
+  VolumeX,
+  Play,
+  Percent,
+  RefreshCw,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-import { Business, Product } from "@/lib/types";
-import { formatKZT, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
+import {
+  Business,
+  Product,
+  BusinessSlide,
+  BusinessCategory,
+  OrderStatus,
+  PaymentStatus,
+} from "@/lib/types";
+import { formatKZT, formatDate, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
 import { BrandLogo } from "@/components/BrandLogo";
 import { PwaInstallButton } from "@/components/PwaInstallButton";
 
@@ -55,6 +70,36 @@ interface OrderResult {
   bookingDateTime?: string;
   serviceName?: string;
 }
+
+interface ClientOrderRecord {
+  id: string;
+  order_code: string;
+  status: OrderStatus;
+  payment_method: string;
+  payment_status?: PaymentStatus;
+  delivery_method?: string;
+  total_price: number;
+  items: { name: string; price: number; quantity: number }[];
+  receipt_url?: string;
+  created_at: string;
+}
+
+interface FlyingItem {
+  id: number;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  image?: string;
+}
+
+interface DisplayCategory {
+  name: string;
+  imageUrl: string;
+  count: number;
+}
+
+type BottomTab = "shop" | "catalog" | "orders";
 
 const DELIVERY_OPTIONS = [
   {
@@ -87,6 +132,20 @@ const TIME_SLOTS = [
   "19:00",
   "20:00",
 ];
+
+const BADGE_META: Record<string, { label: string; className: string }> = {
+  hit: { label: "Хит", className: "bg-amber-500 text-white" },
+  new: { label: "Новинка", className: "bg-indigo-600 text-white" },
+  discount: { label: "Скидка", className: "bg-rose-600 text-white" },
+  in_stock: { label: "В наличии", className: "bg-emerald-50 text-emerald-700" },
+};
+
+const CLIENT_ORDER_STATUS: Record<string, { label: string; className: string }> = {
+  new: { label: "Принят", className: "bg-blue-50 text-blue-700" },
+  in_progress: { label: "В работе", className: "bg-amber-50 text-amber-800" },
+  done: { label: "Выполнен", className: "bg-emerald-50 text-emerald-700" },
+  cancelled: { label: "Отменён", className: "bg-slate-100 text-slate-500" },
+};
 
 function getLocalIsoDate(offsetDays = 0): string {
   const d = new Date();
@@ -162,6 +221,29 @@ function getOrCreateChatSessionId(businessId: string): string {
   return generated;
 }
 
+function getSavedOrderCodes(businessId: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(`tiyin_my_orders_${businessId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOrderCodeLocally(businessId: string, orderCode: string) {
+  if (typeof window === "undefined" || !orderCode) return;
+  try {
+    const existing = getSavedOrderCodes(businessId);
+    const next = [orderCode, ...existing.filter((c) => c !== orderCode)].slice(0, 30);
+    window.localStorage.setItem(`tiyin_my_orders_${businessId}`, JSON.stringify(next));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 function getProductPhotos(p: Product): string[] {
   const list: string[] = [];
   if (p.image_url?.trim()) list.push(p.image_url.trim());
@@ -175,6 +257,48 @@ function getProductPhotos(p: Product): string[] {
   return list;
 }
 
+function StorefrontSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#F7F8FA] pb-24 animate-pulse">
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-100 h-14 px-4 flex items-center justify-between max-w-2xl mx-auto">
+        <div className="w-8 h-8 rounded-xl bg-slate-200/80" />
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-slate-200/80" />
+          <div className="w-28 h-4 rounded-md bg-slate-200/80" />
+        </div>
+        <div className="w-8 h-8 rounded-xl bg-slate-200/80" />
+      </div>
+      <div className="max-w-2xl mx-auto px-3.5 pt-3.5 space-y-5">
+        <div className="flex gap-3 overflow-hidden">
+          <div className="w-[82%] h-36 rounded-2xl bg-slate-200/80 shrink-0" />
+          <div className="w-[40%] h-36 rounded-2xl bg-slate-200/60 shrink-0" />
+        </div>
+        <div className="flex gap-3 overflow-hidden">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="flex flex-col items-center gap-1.5 shrink-0">
+              <div className="w-16 h-16 rounded-2xl bg-slate-200/80" />
+              <div className="w-12 h-2.5 rounded bg-slate-200/70" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-white rounded-2xl p-2.5 space-y-2.5">
+              <div className="aspect-square rounded-xl bg-slate-200/75" />
+              <div className="h-3.5 w-3/4 rounded bg-slate-200/80" />
+              <div className="h-3 w-1/2 rounded bg-slate-200/60" />
+              <div className="flex items-center justify-between pt-1">
+                <div className="h-5 w-16 rounded bg-slate-200/80" />
+                <div className="w-9 h-9 rounded-xl bg-slate-200/80" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BusinessStorefrontPage() {
   const params = useParams();
   const slug = String(params?.slug || "");
@@ -182,21 +306,41 @@ export default function BusinessStorefrontPage() {
   const [loading, setLoading] = useState(true);
   const [business, setBusiness] = useState<Business | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [slides, setSlides] = useState<BusinessSlide[]>([]);
+  const [customCategories, setCustomCategories] = useState<BusinessCategory[]>([]);
   const [aiEnabled, setAiEnabled] = useState(false);
 
+  const [bottomTab, setBottomTab] = useState<BottomTab>("shop");
   const [selectedCategory, setSelectedCategory] = useState("Все");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogSelectedCat, setCatalogSelectedCat] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [cart, setCart] = useState<Record<string, number>>({});
 
+  // Fullscreen Slide Story Viewer
+  const [activeSlide, setActiveSlide] = useState<BusinessSlide | null>(null);
+  const [slideMuted, setSlideMuted] = useState(false);
+
+  // Cart + Micro-animations
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [cartBounce, setCartBounce] = useState(false);
+  const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
+  const cartNavRef = useRef<HTMLButtonElement | null>(null);
+
+  const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+
+  // Client Order History ("Мои заказы")
+  const [myOrders, setMyOrders] = useState<ClientOrderRecord[]>([]);
+  const [loadingMyOrders, setLoadingMyOrders] = useState(false);
+
+  // Services mode booking
   const [bookingService, setBookingService] = useState<Product | null>(null);
   const [bookingDate, setBookingDate] = useState(() => getLocalIsoDate(0));
   const [bookingTime, setBookingTime] = useState("12:00");
   const [bookingError, setBookingError] = useState("");
   const [submittingBooking, setSubmittingBooking] = useState(false);
-  const [activeProduct, setActiveProduct] = useState<Product | null>(null);
-  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState("");
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
@@ -231,6 +375,32 @@ export default function BusinessStorefrontPage() {
     },
   ]);
 
+  const loadMyOrders = useCallback(async (businessId: string) => {
+    const codes = getSavedOrderCodes(businessId);
+    if (codes.length === 0) {
+      setMyOrders([]);
+      return;
+    }
+    setLoadingMyOrders(true);
+    try {
+      const res = await fetch("/api/orders/client-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ businessId, orderCodes: codes }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.orders)) {
+          setMyOrders(json.orders);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingMyOrders(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
@@ -248,9 +418,7 @@ export default function BusinessStorefrontPage() {
               ? "Freedom Pay"
               : "Онлайн-оплата",
         });
-        // Очищаем параметры из адресной строки
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, "", cleanUrl);
+        window.history.replaceState({}, "", window.location.pathname);
       }
     }
 
@@ -294,42 +462,57 @@ export default function BusinessStorefrontPage() {
       } else if (typedBiz.halyk_enabled) {
         setPaymentMethod("Halyk Bank");
       } else {
-        setPaymentMethod("Оплата при получении / Уточнить");
+        setPaymentMethod(
+          typedBiz.storefront_template === "services"
+            ? "Оплата на месте"
+            : "Оплата при получении / Уточнить"
+        );
       }
 
-      const [prodRes, aiRes] = await Promise.all([
+      const [prodRes, slidesRes, catsRes, aiRes] = await Promise.all([
         supabase
           .from("products")
           .select("*")
           .eq("business_id", typedBiz.id)
           .eq("is_available", true)
           .order("created_at", { ascending: false }),
+        supabase
+          .from("business_slides")
+          .select("*")
+          .eq("business_id", typedBiz.id)
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true }),
+        supabase
+          .from("business_categories")
+          .select("*")
+          .eq("business_id", typedBiz.id)
+          .order("sort_order", { ascending: true }),
         fetch(`/api/ai-status?businessId=${typedBiz.id}`),
       ]);
 
       setProducts((prodRes.data as Product[]) || []);
+      setSlides((slidesRes.data as BusinessSlide[]) || []);
+      setCustomCategories((catsRes.data as BusinessCategory[]) || []);
+
       if (aiRes.ok) {
         const aiJson = await aiRes.json();
         setAiEnabled(Boolean(aiJson.ai_enabled));
       }
 
       setLoading(false);
+      loadMyOrders(typedBiz.id);
     };
 
     if (slug) loadStorefront();
-  }, [slug]);
+  }, [slug, loadMyOrders]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500 bg-[#F6F7F9]">
-        Загрузка витрины...
-      </div>
-    );
+    return <StorefrontSkeleton />;
   }
 
   if (!business) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center bg-[#F6F7F9]">
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center bg-[#F7F8FA]">
         <h1 className="text-2xl font-bold text-neutral-950 mb-2">Компания не найдена</h1>
         <p className="text-sm text-slate-500 mb-6">
           Проверьте ссылку или найдите нужную компанию через поиск.
@@ -344,6 +527,7 @@ export default function BusinessStorefrontPage() {
     );
   }
 
+  const brandColor = (business.brand_color || "#111827").trim() || "#111827";
   const isServiceMode = business.storefront_template === "services";
   const kaspiLink = normalizeUrl(business.kaspi_pay_link || "");
   const hasKaspi = Boolean(kaspiLink);
@@ -392,37 +576,123 @@ export default function BusinessStorefrontPage() {
     });
   }
   paymentOptions.push({
-    id: "Оплата при получении / Уточнить",
-    label: "Оплата при получении / Уточнить",
-    hint: "Наличными или по согласованию с менеджером",
+    id: isServiceMode ? "Оплата на месте" : "Оплата при получении / Уточнить",
+    label: isServiceMode ? "Оплата на месте" : "Оплата при получении / Уточнить",
+    hint: isServiceMode
+      ? "После оказания услуги картой или наличными"
+      : "Наличными или по согласованию с менеджером",
   });
 
+  // Build unified visual categories (merging business_categories + product categories)
   const categoryCounts: Record<string, number> = {};
+  const categoryFirstImage: Record<string, string> = {};
   for (const p of products) {
     const cat = (p.category || "").trim();
     if (cat) {
       categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      if (!categoryFirstImage[cat] && p.image_url?.trim()) {
+        categoryFirstImage[cat] = p.image_url.trim();
+      }
     }
   }
-  const uniqueCategories = Object.keys(categoryCounts);
-  const categories = uniqueCategories.length > 0 ? ["Все", ...uniqueCategories] : [];
 
-  const openBookingModal = (service: Product) => {
-    setBookingService(service);
-    setBookingDate(getLocalIsoDate(0));
-    setBookingTime("12:00");
-    setBookingError("");
-  };
+  const displayCategories: DisplayCategory[] = [];
+  const addedCatNames = new Set<string>();
+
+  for (const cc of customCategories) {
+    const cleanName = (cc.name || "").trim();
+    if (!cleanName || addedCatNames.has(cleanName.toLowerCase())) continue;
+    addedCatNames.add(cleanName.toLowerCase());
+    displayCategories.push({
+      name: cleanName,
+      imageUrl: cc.image_url?.trim() || categoryFirstImage[cleanName] || "",
+      count: categoryCounts[cleanName] || 0,
+    });
+  }
+
+  for (const [catName, cnt] of Object.entries(categoryCounts)) {
+    if (addedCatNames.has(catName.toLowerCase())) continue;
+    addedCatNames.add(catName.toLowerCase());
+    displayCategories.push({
+      name: catName,
+      imageUrl: categoryFirstImage[catName] || "",
+      count: cnt,
+    });
+  }
+
+  const discountedProducts = products.filter(
+    (p) =>
+      (p.old_price && p.old_price > p.price) ||
+      (Array.isArray(p.badges) && p.badges.includes("discount"))
+  );
 
   const filteredProducts =
     selectedCategory === "Все"
       ? products
+      : selectedCategory === "__DISCOUNT__"
+      ? discountedProducts
       : products.filter((p) => (p.category || "").trim() === selectedCategory);
 
-  const addToCart = (product: Product) => {
+  const catalogSearchTrim = catalogSearch.trim().toLowerCase();
+  const catalogFilteredProducts = products.filter((p) => {
+    if (catalogSearchTrim) {
+      const hay = `${p.name} ${p.description || ""} ${p.category || ""}`.toLowerCase();
+      if (!hay.includes(catalogSearchTrim)) return false;
+    }
+    if (catalogSelectedCat === "__DISCOUNT__") {
+      return (
+        (p.old_price && p.old_price > p.price) ||
+        (Array.isArray(p.badges) && p.badges.includes("discount"))
+      );
+    }
+    if (catalogSelectedCat) {
+      return (p.category || "").trim() === catalogSelectedCat;
+    }
+    return true;
+  });
+
+  const triggerFlyToCart = (
+    product: Product,
+    sourceEl?: HTMLElement | null
+  ) => {
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+      try {
+        navigator.vibrate(15);
+      } catch {
+        // ignore on unsupported devices
+      }
+    }
+
+    setCartBounce(true);
+    setTimeout(() => setCartBounce(false), 380);
+
+    if (!sourceEl || !cartNavRef.current || typeof window === "undefined") return;
+    const fromRect = sourceEl.getBoundingClientRect();
+    const toRect = cartNavRef.current.getBoundingClientRect();
+    const flyId = Date.now() + Math.random();
+
+    setFlyingItems((prev) => [
+      ...prev,
+      {
+        id: flyId,
+        startX: fromRect.left + fromRect.width / 2,
+        startY: fromRect.top + fromRect.height / 2,
+        endX: toRect.left + toRect.width / 2,
+        endY: toRect.top + toRect.height / 2,
+        image: product.image_url?.trim() || undefined,
+      },
+    ]);
+
+    setTimeout(() => {
+      setFlyingItems((prev) => prev.filter((item) => item.id !== flyId));
+    }, 520);
+  };
+
+  const addToCart = (product: Product, sourceEl?: HTMLElement | null) => {
     setCart((prev) => ({ ...prev, [product.id]: (prev[product.id] || 0) + 1 }));
-    setAddedToast(`«${product.name}» добавлено в корзину`);
-    setTimeout(() => setAddedToast(""), 1800);
+    triggerFlyToCart(product, sourceEl);
+    setAddedToast(`«${product.name}» в корзине`);
+    setTimeout(() => setAddedToast(""), 1600);
   };
 
   const removeFromCart = (id: string) =>
@@ -443,6 +713,13 @@ export default function BusinessStorefrontPage() {
   const openProductModal = (p: Product) => {
     setActiveProduct(p);
     setActivePhotoIndex(0);
+  };
+
+  const openBookingModal = (service: Product) => {
+    setBookingService(service);
+    setBookingDate(getLocalIsoDate(0));
+    setBookingTime("12:00");
+    setBookingError("");
   };
 
   const cartItems = Object.entries(cart)
@@ -555,6 +832,11 @@ export default function BusinessStorefrontPage() {
       });
       const json = await res.json();
       if (res.ok) {
+        if (json.orderCode) {
+          saveOrderCodeLocally(business.id, json.orderCode);
+          loadMyOrders(business.id);
+        }
+
         if (
           json.requiresOnlinePayment &&
           (json.paymentProvider === "halyk" || json.paymentProvider === "freedom")
@@ -637,6 +919,11 @@ export default function BusinessStorefrontPage() {
       });
       const json = await res.json();
       if (res.ok) {
+        if (json.orderCode) {
+          saveOrderCodeLocally(business.id, json.orderCode);
+          loadMyOrders(business.id);
+        }
+
         if (
           json.requiresOnlinePayment &&
           (json.paymentProvider === "halyk" || json.paymentProvider === "freedom")
@@ -701,6 +988,7 @@ export default function BusinessStorefrontPage() {
         setReceiptError(json.error || "Не удалось загрузить чек. Попробуйте снова.");
       } else {
         setReceiptUploadedUrl(json.receiptUrl || "uploaded");
+        loadMyOrders(business.id);
       }
     } catch {
       setReceiptError("Ошибка сети при загрузке чека.");
@@ -739,6 +1027,8 @@ export default function BusinessStorefrontPage() {
         { role: "assistant", text: json.reply || "Готов помочь!" },
       ]);
       if (json.orderCreated?.orderCode) {
+        saveOrderCodeLocally(business.id, json.orderCreated.orderCode);
+        loadMyOrders(business.id);
         setChatOrderBanner(
           `Заказ ${json.orderCreated.orderCode} на ${formatKZT(
             json.orderCreated.totalPrice
@@ -776,16 +1066,185 @@ export default function BusinessStorefrontPage() {
   );
 
   const activePhotos = activeProduct ? getProductPhotos(activeProduct) : [];
+  const businessInitials = (business.pwa_short_name || business.name || "TS")
+    .trim()
+    .slice(0, 2)
+    .toUpperCase();
+
+  const renderProductCard = (product: Product) => {
+    const qty = cart[product.id] || 0;
+    const photos = getProductPhotos(product);
+    const mainPhoto = photos[0];
+    const hasDiscount = Boolean(product.old_price && product.old_price > product.price);
+    const discountPct = hasDiscount
+      ? Math.round(
+          ((Number(product.old_price) - product.price) / Number(product.old_price)) * 100
+        )
+      : 0;
+    const rawBadges = Array.isArray(product.badges) ? product.badges : [];
+    const topBadges = rawBadges.filter((b) => b !== "in_stock");
+    const hasInStockBadge = rawBadges.includes("in_stock");
+    const cashback = Number(product.cashback_percent || 0);
+
+    return (
+      <div
+        key={product.id}
+        onClick={() => openProductModal(product)}
+        className="group bg-white rounded-2xl overflow-hidden border border-slate-100 hover:border-slate-200 transition flex flex-col cursor-pointer"
+      >
+        <div className="relative aspect-square bg-[#F4F5F7] overflow-hidden">
+          {mainPhoto ? (
+            <img
+              src={mainPhoto}
+              alt={product.name}
+              className="w-full h-full object-cover group-hover:scale-[1.03] transition duration-300"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-slate-300">
+              <Package className="w-8 h-8" />
+            </div>
+          )}
+
+          {/* Top-left badges */}
+          <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[82%]">
+            {hasDiscount && discountPct > 0 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-bold leading-none">
+                -{discountPct}%
+              </span>
+            )}
+            {topBadges.map((b) => {
+              if (b === "discount" && hasDiscount) return null;
+              const meta = BADGE_META[b];
+              if (!meta) return null;
+              return (
+                <span
+                  key={b}
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold leading-none ${meta.className}`}
+                >
+                  {meta.label}
+                </span>
+              );
+            })}
+          </div>
+
+          {photos.length > 1 && (
+            <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold">
+              1/{photos.length}
+            </span>
+          )}
+        </div>
+
+        <div className="p-3 flex-1 flex flex-col justify-between gap-2">
+          <div className="space-y-1">
+            {(cashback > 0 || hasInStockBadge) && (
+              <div className="flex flex-wrap items-center gap-1">
+                {cashback > 0 && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-[#48B81A] text-white text-[10px] font-extrabold leading-none">
+                    {cashback}% Б
+                  </span>
+                )}
+                {hasInStockBadge && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold leading-none">
+                    В наличии
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="font-medium text-[13px] text-neutral-900 line-clamp-2 leading-snug">
+              {product.name}
+            </div>
+            {product.description && (
+              <p className="text-[11px] text-slate-400 line-clamp-1 leading-relaxed">
+                {product.description}
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-end justify-between gap-1.5 pt-1">
+            <div className="min-w-0">
+              {hasDiscount && product.old_price && (
+                <div className="text-[11px] text-slate-400 line-through leading-none mb-0.5">
+                  {formatKZT(product.old_price)}
+                </div>
+              )}
+              <div className="font-extrabold text-[16px] text-neutral-950 tracking-tight leading-none">
+                {formatKZT(product.price)}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                addToCart(product, e.currentTarget);
+              }}
+              aria-label="Добавить в корзину"
+              style={{ backgroundColor: qty > 0 ? "#10b981" : brandColor }}
+              className="relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white shadow-sm transition-transform duration-150 active:scale-90 hover:opacity-95"
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-neutral-950 text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-white">
+                {qty > 0 ? qty : "+"}
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-[#F6F7F9] pb-24">
-      {/* CLEAN STICKY TOP BAR */}
-      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200/80">
-        <div className="max-w-2xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
+    <div className="min-h-screen bg-[#F7F8FA] pb-24">
+      <style>{`
+        @keyframes tiyinFly {
+          0% {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+          }
+          70% {
+            opacity: 0.9;
+          }
+          100% {
+            transform: translate(calc(var(--dx) - 50%), calc(var(--dy) - 50%)) scale(0.35);
+            opacity: 0;
+          }
+        }
+        .tiyin-fly-dot {
+          animation: tiyinFly 0.48s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+      `}</style>
+
+      {/* FLY-TO-CART ANIMATION LAYER */}
+      {flyingItems.map((fi) => (
+        <div
+          key={fi.id}
+          className="fixed z-[70] pointer-events-none tiyin-fly-dot w-9 h-9 rounded-full overflow-hidden shadow-lg border-2 border-white flex items-center justify-center"
+          style={
+            {
+              left: `${fi.startX}px`,
+              top: `${fi.startY}px`,
+              backgroundColor: brandColor,
+              "--dx": `${fi.endX - fi.startX}px`,
+              "--dy": `${fi.endY - fi.startY}px`,
+            } as React.CSSProperties
+          }
+        >
+          {fi.image ? (
+            <img src={fi.image} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <ShoppingCart className="w-4 h-4 text-white" />
+          )}
+        </div>
+      ))}
+
+      {/* CLEAN MINIMAL TOP BAR (NO COVER BANNER) */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-100">
+        <div className="max-w-2xl mx-auto px-3.5 h-14 flex items-center justify-between gap-2">
           <Link
             href="/"
-            aria-label="Поиск компаний"
-            className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center text-neutral-700 transition shrink-0"
+            aria-label="Назад к поиску"
+            className="w-9 h-9 rounded-xl hover:bg-slate-100 flex items-center justify-center text-neutral-800 transition shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>
@@ -793,9 +1252,12 @@ export default function BusinessStorefrontPage() {
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
-            className="flex items-center gap-2 min-w-0 hover:opacity-80 transition"
+            className="flex items-center gap-2.5 min-w-0 hover:opacity-80 transition"
           >
-            <div className="w-7 h-7 rounded-lg bg-neutral-950 text-white text-[10px] font-extrabold overflow-hidden flex items-center justify-center shrink-0">
+            <div
+              className="w-8 h-8 rounded-xl text-white text-[11px] font-extrabold overflow-hidden flex items-center justify-center shrink-0"
+              style={{ backgroundColor: brandColor }}
+            >
               {business.logo_url ? (
                 <img
                   src={business.logo_url}
@@ -803,327 +1265,689 @@ export default function BusinessStorefrontPage() {
                   className="w-full h-full object-cover"
                 />
               ) : (
-                (business.pwa_short_name || business.name || "TS")
-                  .trim()
-                  .slice(0, 2)
-                  .toUpperCase()
+                businessInitials
               )}
             </div>
-            <span className="font-bold text-sm text-neutral-950 truncate">
+            <span className="font-bold text-[15px] text-neutral-950 truncate tracking-tight">
               {business.pwa_short_name || business.name}
             </span>
           </button>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            {(!isServiceMode || cartCount > 0) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setOrderError("");
-                  setCheckoutOpen(true);
-                }}
-                aria-label="Открыть корзину"
-                className={`relative h-10 px-3 rounded-xl flex items-center gap-1.5 font-semibold text-xs transition ${
-                  cartCount > 0
-                    ? "bg-neutral-950 text-white shadow-sm"
-                    : "bg-slate-100 text-neutral-700 hover:bg-slate-200"
-                }`}
-              >
-                <ShoppingCart className="w-4 h-4" />
-                {cartCount > 0 && <span>{cartCount}</span>}
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setMenuOpen(true)}
-              aria-label="Открыть меню витрины"
-              className="h-10 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-neutral-900 font-semibold text-xs inline-flex items-center gap-1.5 transition"
-            >
-              <Menu className="w-4 h-4" />
-              <span className="hidden sm:inline">Меню</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            aria-label="О магазине и меню"
+            className="w-9 h-9 rounded-xl bg-slate-100/90 hover:bg-slate-200/80 text-neutral-900 flex items-center justify-center transition shrink-0"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Quick Toast when item added */}
+      {/* Quick Toast */}
       {addedToast && (
         <div className="fixed top-16 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
-          <div className="bg-neutral-950 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg">
+          <div className="bg-neutral-950/90 backdrop-blur text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg">
             {addedToast}
           </div>
         </div>
       )}
 
-      {/* MAIN CONTAINER */}
+      {/* MAIN CONTENT BY BOTTOM TAB */}
       <div className="max-w-2xl mx-auto">
-        {/* COMPACT HERO BANNER: LOGO + NAME + CATEGORY + "О нас" */}
-        <div className="px-3 sm:px-4 pt-3">
-          <div
-            className="relative h-32 sm:h-40 rounded-3xl overflow-hidden shadow-sm border border-slate-200/80 flex items-end p-4 sm:p-5"
-            style={
-              business.cover_url
-                ? {
-                    backgroundImage: `url(${business.cover_url})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
-                : {
-                    background:
-                      "radial-gradient(circle at 82% 18%, #2e3b55 0%, #151923 55%, #090b10 100%)",
-                  }
-            }
-          >
-            {!business.cover_url && (
-              <div
-                className="absolute -right-12 -top-12 w-52 h-52 rounded-full opacity-30 blur-3xl pointer-events-none"
-                style={{
-                  background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
-                }}
-              />
-            )}
-
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-black/10" />
-
-            <div className="relative z-10 w-full flex items-end justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-white/15 backdrop-blur-md border border-white/25 overflow-hidden flex items-center justify-center text-white font-extrabold text-base shrink-0 shadow-sm">
-                  {business.logo_url ? (
-                    <img
-                      src={business.logo_url}
-                      alt={business.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    (business.pwa_short_name || business.name || "TS")
-                      .trim()
-                      .slice(0, 2)
-                      .toUpperCase()
-                  )}
-                </div>
-
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {business.category && (
-                      <span className="inline-block px-2 py-0.5 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white/90 text-[10px] font-medium">
-                        {business.category}
-                      </span>
-                    )}
-                    {business.city && (
-                      <span className="text-[11px] text-white/75">{business.city}</span>
-                    )}
-                  </div>
-                  <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate mt-0.5 drop-shadow-sm">
-                    {business.name}
-                  </h1>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setMenuOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/25 text-white text-xs font-semibold shrink-0 transition"
-              >
-                О нас
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* CLEAN HORIZONTAL CATEGORIES WITH COUNTS */}
-        {categories.length > 0 && (
-          <div className="px-3 sm:px-4 pt-3.5">
-            <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-              {categories.map((cat) => {
-                const count = cat === "Все" ? products.length : categoryCounts[cat] || 0;
-                const active = selectedCategory === cat;
-                return (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3.5 py-2 rounded-2xl text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1.5 transition ${
-                      active
-                        ? "bg-neutral-950 text-white shadow-sm"
-                        : "bg-white border border-slate-200/90 text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    <span>{cat}</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded-md ${
-                        active
-                          ? "bg-white/20 text-white"
-                          : "bg-slate-100 text-slate-500"
-                      }`}
+        {/* ================= TAB 1: МАГАЗИН ================= */}
+        {bottomTab === "shop" && (
+          <div className="pt-3 space-y-4">
+            {/* PROMO / VIDEO SLIDES CAROUSEL */}
+            {slides.length > 0 && (
+              <div className="px-3.5">
+                <div className="flex gap-2.5 overflow-x-auto pb-1 snap-x snap-mandatory no-scrollbar">
+                  {slides.map((slide) => (
+                    <button
+                      key={slide.id}
+                      type="button"
+                      onClick={() => {
+                        setSlideMuted(false);
+                        setActiveSlide(slide);
+                      }}
+                      className="relative w-[82%] sm:w-[300px] h-36 sm:h-40 rounded-2xl overflow-hidden shrink-0 snap-start bg-neutral-900 text-left group"
                     >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                      {slide.media_type === "video" ? (
+                        <video
+                          src={slide.media_url}
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <img
+                          src={slide.media_url}
+                          alt={slide.title || "Акция"}
+                          className="w-full h-full object-cover group-hover:scale-[1.02] transition duration-300"
+                        />
+                      )}
 
-        {/* MAIN CATALOG: SERVICES PRICE LIST OR SHOP GRID */}
-        <main className="px-3 sm:px-4 pt-4">
-          {filteredProducts.length === 0 ? (
-            <div className="bg-white p-8 rounded-3xl border border-slate-200 text-center text-sm text-slate-500 space-y-3">
-              <p>
-                {isServiceMode
-                  ? "Список услуг пока наполняется."
-                  : "Каталог компании пока наполняется."}
-              </p>
-              <button
-                type="button"
-                onClick={() => setMenuOpen(true)}
-                className="px-4 py-2 rounded-xl bg-neutral-950 text-white text-xs font-semibold"
-              >
-                Открыть контакты компании
-              </button>
-            </div>
-          ) : isServiceMode ? (
-            <div className="space-y-2.5">
-              {filteredProducts.map((service) => {
-                const photos = getProductPhotos(service);
-                const mainPhoto = photos[0];
-                return (
-                  <div
-                    key={service.id}
-                    onClick={() => openProductModal(service)}
-                    className="bg-white rounded-2xl border border-slate-200/90 p-3.5 sm:p-4 shadow-sm hover:shadow-md transition flex items-center justify-between gap-3 cursor-pointer"
-                  >
-                    <div className="flex items-start gap-3 min-w-0 flex-1">
-                      {mainPhoto && (
-                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-slate-200/70">
-                          <img
-                            src={mainPhoto}
-                            alt={service.name}
-                            className="w-full h-full object-cover"
-                          />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+
+                      {slide.badge_text && (
+                        <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-lg bg-white/95 text-neutral-950 text-[10px] font-extrabold shadow-sm">
+                          {slide.badge_text}
+                        </span>
+                      )}
+
+                      {slide.media_type === "video" && (
+                        <span className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/50 backdrop-blur-sm text-white flex items-center justify-center">
+                          <VolumeX className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+
+                      {(slide.title || slide.subtitle) && (
+                        <div className="absolute bottom-2.5 inset-x-3 text-white">
+                          {slide.title && (
+                            <div className="font-bold text-sm leading-tight line-clamp-1">
+                              {slide.title}
+                            </div>
+                          )}
+                          {slide.subtitle && (
+                            <div className="text-[11px] text-white/80 line-clamp-1 mt-0.5">
+                              {slide.subtitle}
+                            </div>
+                          )}
                         </div>
                       )}
-                      <div className="min-w-0 flex-1">
-                        <div className="font-bold text-sm sm:text-base text-neutral-950 leading-snug">
-                          {service.name}
-                        </div>
-                        {service.description && (
-                          <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">
-                            {service.description}
-                          </p>
-                        )}
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <span className="font-extrabold text-sm sm:text-base text-neutral-950">
-                            {formatKZT(service.price)}
-                          </span>
-                          {service.duration_label && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-medium">
-                              <Clock className="w-3 h-3" />
-                              {service.duration_label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* HORIZONTAL VISUAL CATEGORIES STRIP */}
+            {displayCategories.length > 0 && (
+              <div className="px-3.5">
+                <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory("Все")}
+                    className="flex flex-col items-center gap-1.5 shrink-0 w-[68px]"
+                  >
+                    <div
+                      className="w-16 h-16 rounded-2xl flex items-center justify-center transition border-2"
+                      style={{
+                        backgroundColor:
+                          selectedCategory === "Все" ? brandColor : "#FFFFFF",
+                        borderColor:
+                          selectedCategory === "Все" ? brandColor : "#F1F5F9",
+                        color: selectedCategory === "Все" ? "#FFFFFF" : "#111827",
+                      }}
+                    >
+                      <LayoutGrid className="w-6 h-6" />
+                    </div>
+                    <span
+                      className={`text-[11px] leading-tight text-center line-clamp-2 ${
+                        selectedCategory === "Все"
+                          ? "font-bold text-neutral-950"
+                          : "font-medium text-slate-600"
+                      }`}
+                    >
+                      Все
+                    </span>
+                  </button>
+
+                  {displayCategories.map((cat) => {
+                    const active = selectedCategory === cat.name;
+                    return (
+                      <button
+                        key={cat.name}
+                        type="button"
+                        onClick={() => setSelectedCategory(cat.name)}
+                        className="flex flex-col items-center gap-1.5 shrink-0 w-[68px]"
+                      >
+                        <div
+                          className="w-16 h-16 rounded-2xl bg-white overflow-hidden flex items-center justify-center transition border-2"
+                          style={{
+                            borderColor: active ? brandColor : "#F1F5F9",
+                          }}
+                        >
+                          {cat.imageUrl ? (
+                            <img
+                              src={cat.imageUrl}
+                              alt={cat.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-sm font-bold text-slate-500">
+                              {cat.name.slice(0, 2).toUpperCase()}
                             </span>
                           )}
                         </div>
-                      </div>
-                    </div>
+                        <span
+                          className={`text-[11px] leading-tight text-center line-clamp-2 ${
+                            active
+                              ? "font-bold text-neutral-950"
+                              : "font-medium text-slate-600"
+                          }`}
+                        >
+                          {cat.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
+            {/* PRODUCTS GRID OR SERVICES LIST */}
+            <main className="px-3.5">
+              {selectedCategory !== "Все" && (
+                <div className="flex items-center justify-between mb-2.5">
+                  <h2 className="font-bold text-base text-neutral-950">
+                    {selectedCategory === "__DISCOUNT__"
+                      ? "Товары со скидкой"
+                      : selectedCategory}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory("Все")}
+                    className="text-xs font-semibold text-slate-500 hover:text-neutral-900"
+                  >
+                    Сбросить
+                  </button>
+                </div>
+              )}
+
+              {filteredProducts.length === 0 ? (
+                <div className="bg-white p-8 rounded-3xl border border-slate-100 text-center text-sm text-slate-500 space-y-3">
+                  <p>
+                    {isServiceMode
+                      ? "Список услуг пока наполняется."
+                      : "В этом разделе пока нет товаров."}
+                  </p>
+                  {selectedCategory !== "Все" ? (
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openBookingModal(service);
-                      }}
-                      className="px-3.5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold shrink-0 transition active:scale-95 shadow-sm"
+                      onClick={() => setSelectedCategory("Все")}
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                      style={{ backgroundColor: brandColor }}
                     >
-                      Записаться
+                      Показать все
                     </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {filteredProducts.map((product) => {
-                const qty = cart[product.id] || 0;
-                const photos = getProductPhotos(product);
-                const mainPhoto = photos[0];
-
-                return (
-                  <div
-                    key={product.id}
-                    onClick={() => openProductModal(product)}
-                    className="group bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-sm hover:shadow-md transition flex flex-col cursor-pointer"
-                  >
-                    <div className="relative aspect-square bg-slate-100 overflow-hidden">
-                      {mainPhoto ? (
-                        <img
-                          src={mainPhoto}
-                          alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-[1.03] transition duration-300"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200/70 text-slate-400">
-                          <Package className="w-8 h-8 opacity-50" />
-                        </div>
-                      )}
-
-                      {photos.length > 1 && (
-                        <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold">
-                          1/{photos.length}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="p-2.5 sm:p-3 flex-1 flex flex-col justify-between gap-2">
-                      <div>
-                        <div className="font-semibold text-xs sm:text-sm text-neutral-950 line-clamp-2 leading-snug">
-                          {product.name}
-                        </div>
-                        {product.description && (
-                          <p className="text-[11px] text-slate-500 line-clamp-2 mt-1 leading-relaxed">
-                            {product.description}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-end justify-between gap-1.5 pt-1">
-                        <div className="font-extrabold text-sm text-neutral-950 leading-none">
-                          {formatKZT(product.price)}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setMenuOpen(true)}
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                      style={{ backgroundColor: brandColor }}
+                    >
+                      Контакты компании
+                    </button>
+                  )}
+                </div>
+              ) : isServiceMode ? (
+                <div className="space-y-2.5">
+                  {filteredProducts.map((service) => {
+                    const photos = getProductPhotos(service);
+                    const mainPhoto = photos[0];
+                    return (
+                      <div
+                        key={service.id}
+                        onClick={() => openProductModal(service)}
+                        className="bg-white rounded-2xl border border-slate-100 p-3.5 flex items-center justify-between gap-3 cursor-pointer hover:border-slate-200 transition"
+                      >
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          {mainPhoto && (
+                            <div className="w-16 h-16 rounded-xl bg-slate-100 overflow-hidden shrink-0">
+                              <img
+                                src={mainPhoto}
+                                alt={service.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm text-neutral-950 leading-snug">
+                              {service.name}
+                            </div>
+                            {service.description && (
+                              <p className="text-xs text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
+                                {service.description}
+                              </p>
+                            )}
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              <span className="font-extrabold text-[15px] text-neutral-950">
+                                {formatKZT(service.price)}
+                              </span>
+                              {service.duration_label && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-medium">
+                                  <Clock className="w-3 h-3" />
+                                  {service.duration_label}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
 
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            addToCart(product);
+                            openBookingModal(service);
                           }}
-                          aria-label={
-                            product.item_type === "service"
-                              ? "Заказать услугу"
-                              : "Добавить в корзину"
-                          }
-                          className={`relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition active:scale-95 ${
-                            qty > 0
-                              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                              : "bg-blue-600 hover:bg-blue-700 text-white"
-                          }`}
+                          style={{ backgroundColor: brandColor }}
+                          className="px-3.5 py-2.5 rounded-xl text-white text-xs font-semibold shrink-0 transition active:scale-95"
                         >
-                          <ShoppingCart className="w-4 h-4" />
-                          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-md bg-neutral-950 text-white text-[9px] font-extrabold flex items-center justify-center border border-white">
-                            {qty > 0 ? qty : "+"}
-                          </span>
+                          Записаться
                         </button>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                  {filteredProducts.map((product) => renderProductCard(product))}
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+
+        {/* ================= TAB 2: КАТАЛОГ (3-COLUMN VISUAL GRID + SEARCH) ================= */}
+        {bottomTab === "catalog" && (
+          <div className="px-3.5 pt-3.5 space-y-4">
+            {/* Search bar */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                placeholder={isServiceMode ? "Поиск услуги..." : "Поиск товара..."}
+                className="w-full pl-10 pr-10 py-3 rounded-2xl bg-white border border-slate-200/80 text-sm text-neutral-950 placeholder:text-slate-400 focus:outline-none focus:border-neutral-400"
+              />
+              {catalogSearch && (
+                <button
+                  type="button"
+                  onClick={() => setCatalogSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
-          )}
-        </main>
+
+            {/* If searching OR a category is chosen: show matching products */}
+            {catalogSearchTrim || catalogSelectedCat ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogSelectedCat(null);
+                      setCatalogSearch("");
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-neutral-950"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span>Все категории</span>
+                  </button>
+                  <span className="text-xs font-bold text-neutral-900 truncate">
+                    {catalogSelectedCat === "__DISCOUNT__"
+                      ? "Товары со скидкой"
+                      : catalogSelectedCat || `Найдено: ${catalogFilteredProducts.length}`}
+                  </span>
+                </div>
+
+                {catalogFilteredProducts.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-8 text-center text-sm text-slate-500 border border-slate-100">
+                    Ничего не найдено по запросу.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                    {catalogFilteredProducts.map((p) => renderProductCard(p))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* 3-Column Visual Category Tiles (like Reference Photo 2) */
+              <div className="space-y-3">
+                <h1 className="font-bold text-lg text-neutral-950 px-0.5">
+                  {isServiceMode ? "Разделы услуг" : "Каталог товаров"}
+                </h1>
+
+                <div className="grid grid-cols-3 gap-2.5">
+                  {discountedProducts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCatalogSelectedCat("__DISCOUNT__")}
+                      className="bg-rose-50 hover:bg-rose-100/80 rounded-2xl p-2.5 h-32 flex flex-col justify-between text-left transition overflow-hidden relative"
+                    >
+                      <span className="text-[11px] font-bold text-rose-900 leading-tight line-clamp-2 z-10">
+                        Товары со скидками
+                      </span>
+                      <div className="self-end w-11 h-11 rounded-xl bg-rose-500 text-white flex items-center justify-center">
+                        <Percent className="w-6 h-6" />
+                      </div>
+                    </button>
+                  )}
+
+                  {displayCategories.map((cat) => (
+                    <button
+                      key={cat.name}
+                      type="button"
+                      onClick={() => setCatalogSelectedCat(cat.name)}
+                      className="bg-white hover:bg-slate-50 border border-slate-100 rounded-2xl p-2.5 h-32 flex flex-col justify-between text-left transition overflow-hidden relative"
+                    >
+                      <span className="text-[11px] font-semibold text-neutral-900 leading-tight line-clamp-2 z-10">
+                        {cat.name}
+                      </span>
+                      <div className="self-end w-16 h-16 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center shrink-0">
+                        {cat.imageUrl ? (
+                          <img
+                            src={cat.imageUrl}
+                            alt={cat.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Package className="w-6 h-6 text-slate-300" />
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================= TAB 3: МОИ ЗАКАЗЫ ================= */}
+        {bottomTab === "orders" && (
+          <div className="px-3.5 pt-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h1 className="font-bold text-lg text-neutral-950">Мои заказы</h1>
+                <p className="text-xs text-slate-500">
+                  История ваших заказов в «{business.pwa_short_name || business.name}»
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadMyOrders(business.id)}
+                disabled={loadingMyOrders}
+                className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 transition"
+                title="Обновить статусы"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${loadingMyOrders ? "animate-spin" : ""}`}
+                />
+              </button>
+            </div>
+
+            {loadingMyOrders && myOrders.length === 0 ? (
+              <div className="space-y-3 animate-pulse">
+                {[1, 2].map((i) => (
+                  <div key={i} className="bg-white rounded-2xl p-4 h-28" />
+                ))}
+              </div>
+            ) : myOrders.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-slate-100 p-8 text-center space-y-3">
+                <ClipboardList className="w-10 h-10 text-slate-300 mx-auto" />
+                <div className="text-sm font-semibold text-neutral-900">
+                  У вас пока нет заказов
+                </div>
+                <p className="text-xs text-slate-500">
+                  После оформления заказа или записи его статус автоматически появится здесь.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setBottomTab("shop")}
+                  style={{ backgroundColor: brandColor }}
+                  className="px-4 py-2.5 rounded-xl text-white text-xs font-semibold"
+                >
+                  Перейти к покупкам
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {myOrders.map((ord) => {
+                  const st =
+                    CLIENT_ORDER_STATUS[ord.status] || CLIENT_ORDER_STATUS.new;
+                  const isKaspiUnpaid =
+                    (ord.payment_method || "").toLowerCase().includes("kaspi") &&
+                    !ord.receipt_url &&
+                    ord.payment_status !== "paid";
+
+                  return (
+                    <div
+                      key={ord.id}
+                      className="bg-white rounded-2xl border border-slate-100 p-4 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm text-neutral-950">
+                            {ord.order_code}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${st.className}`}
+                          >
+                            {st.label}
+                          </span>
+                          {ord.payment_status === "paid" && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                              Оплачено
+                            </span>
+                          )}
+                          {ord.payment_status === "pending_review" && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800">
+                              Чек на проверке
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-slate-400">
+                          {formatDate(ord.created_at)}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-slate-600">
+                        {Array.isArray(ord.items)
+                          ? ord.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")
+                          : ""}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                        <div className="text-xs text-slate-500">
+                          {ord.payment_method}
+                        </div>
+                        <div className="font-extrabold text-sm text-neutral-950">
+                          {formatKZT(ord.total_price)}
+                        </div>
+                      </div>
+
+                      {isKaspiUnpaid && hasKaspi && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReceiptUploadedUrl("");
+                            setReceiptError("");
+                            setOrderResult({
+                              orderId: ord.id,
+                              orderCode: ord.order_code,
+                              totalPrice: ord.total_price,
+                              paymentMethod: ord.payment_method,
+                              deliveryMethod: ord.delivery_method || "Самовывоз",
+                            });
+                          }}
+                          className="w-full py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-[#F14635] text-xs font-semibold transition"
+                        >
+                          Оплатить Kaspi / Прикрепить чек
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* RIGHT SLIDE-OUT MENU DRAWER */}
+      {/* BOTTOM NAVIGATION BAR (4 TABS: МАГАЗИН | КАТАЛОГ | КОРЗИНА | МОИ ЗАКАЗЫ) */}
+      <nav className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200/80 pb-[max(0.4rem,env(safe-area-inset-bottom))]">
+        <div className="max-w-2xl mx-auto grid grid-cols-4 h-14 px-2">
+          <button
+            type="button"
+            onClick={() => setBottomTab("shop")}
+            className="flex flex-col items-center justify-center gap-0.5 transition"
+            style={{ color: bottomTab === "shop" ? brandColor : "#94a3b8" }}
+          >
+            <Store className="w-5 h-5" />
+            <span className="text-[10px] font-semibold leading-none">Магазин</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setBottomTab("catalog")}
+            className="flex flex-col items-center justify-center gap-0.5 transition"
+            style={{ color: bottomTab === "catalog" ? brandColor : "#94a3b8" }}
+          >
+            <LayoutGrid className="w-5 h-5" />
+            <span className="text-[10px] font-semibold leading-none">Каталог</span>
+          </button>
+
+          <button
+            ref={cartNavRef}
+            type="button"
+            onClick={() => {
+              setOrderError("");
+              setCheckoutOpen(true);
+            }}
+            className={`relative flex flex-col items-center justify-center gap-0.5 transition-transform duration-200 ${
+              cartBounce ? "scale-110" : "scale-100"
+            }`}
+            style={{ color: cartCount > 0 ? brandColor : "#94a3b8" }}
+          >
+            <div className="relative">
+              <ShoppingCart className="w-5 h-5" />
+              {cartCount > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-2.5 min-w-[17px] h-[17px] px-1 rounded-full text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-white"
+                  style={{ backgroundColor: brandColor }}
+                >
+                  {cartCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-semibold leading-none">Корзина</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setBottomTab("orders");
+              loadMyOrders(business.id);
+            }}
+            className="flex flex-col items-center justify-center gap-0.5 transition"
+            style={{ color: bottomTab === "orders" ? brandColor : "#94a3b8" }}
+          >
+            <ClipboardList className="w-5 h-5" />
+            <span className="text-[10px] font-semibold leading-none">Мои заказы</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* FULLSCREEN SLIDE STORY VIEWER (WITH SOUND ON TAP FOR VIDEOS) */}
+      {activeSlide && (
+        <div
+          onClick={() => setActiveSlide(null)}
+          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-3 sm:p-6"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-md max-h-[88vh] rounded-3xl overflow-hidden bg-neutral-950 shadow-2xl flex flex-col"
+          >
+            <div className="absolute top-3.5 right-3.5 z-20 flex items-center gap-2">
+              {activeSlide.media_type === "video" && (
+                <button
+                  type="button"
+                  onClick={() => setSlideMuted((prev) => !prev)}
+                  className="w-9 h-9 rounded-full bg-black/55 backdrop-blur text-white flex items-center justify-center"
+                  aria-label="Включить/выключить звук"
+                >
+                  {slideMuted ? (
+                    <VolumeX className="w-4 h-4" />
+                  ) : (
+                    <Volume2 className="w-4 h-4" />
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveSlide(null)}
+                className="w-9 h-9 rounded-full bg-black/55 backdrop-blur text-white flex items-center justify-center"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="relative flex-1 min-h-[360px] max-h-[76vh] bg-black flex items-center justify-center">
+              {activeSlide.media_type === "video" ? (
+                <video
+                  src={activeSlide.media_url}
+                  autoPlay
+                  loop
+                  playsInline
+                  muted={slideMuted}
+                  controls={false}
+                  className="w-full h-full max-h-[76vh] object-contain"
+                />
+              ) : (
+                <img
+                  src={activeSlide.media_url}
+                  alt={activeSlide.title || "Акция"}
+                  className="w-full h-full max-h-[76vh] object-contain"
+                />
+              )}
+            </div>
+
+            {(activeSlide.title || activeSlide.subtitle || activeSlide.link_category) && (
+              <div className="p-4 bg-neutral-950 text-white space-y-2.5">
+                {activeSlide.badge_text && (
+                  <span className="inline-block px-2 py-0.5 rounded-md bg-white/15 text-[11px] font-semibold">
+                    {activeSlide.badge_text}
+                  </span>
+                )}
+                {activeSlide.title && (
+                  <div className="font-bold text-base leading-snug">
+                    {activeSlide.title}
+                  </div>
+                )}
+                {activeSlide.subtitle && (
+                  <p className="text-xs text-white/75 leading-relaxed">
+                    {activeSlide.subtitle}
+                  </p>
+                )}
+                {activeSlide.link_category && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategory(activeSlide.link_category);
+                      setBottomTab("shop");
+                      setActiveSlide(null);
+                    }}
+                    style={{ backgroundColor: brandColor }}
+                    className="w-full py-3 rounded-xl text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Перейти в «{activeSlide.link_category}»</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* RIGHT SLIDE-OUT MENU DRAWER (STORE INFO, CONTACTS, 2GIS, PAYMENTS, DELIVERY, PWA) */}
       {menuOpen && (
         <div
           onClick={() => setMenuOpen(false)}
@@ -1135,7 +1959,10 @@ export default function BusinessStorefrontPage() {
           >
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-xl bg-neutral-950 text-white font-extrabold text-xs overflow-hidden flex items-center justify-center shrink-0">
+                <div
+                  className="w-10 h-10 rounded-xl text-white font-extrabold text-xs overflow-hidden flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: brandColor }}
+                >
                   {business.logo_url ? (
                     <img
                       src={business.logo_url}
@@ -1143,10 +1970,7 @@ export default function BusinessStorefrontPage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    (business.pwa_short_name || business.name || "TS")
-                      .trim()
-                      .slice(0, 2)
-                      .toUpperCase()
+                    businessInitials
                   )}
                 </div>
                 <div className="min-w-0">
@@ -1171,7 +1995,7 @@ export default function BusinessStorefrontPage() {
               {(business.tagline || business.services_description) && (
                 <div className="space-y-1.5">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    О компании
+                    О магазине
                   </div>
                   {business.tagline && (
                     <div className="text-sm font-semibold text-neutral-900">
@@ -1183,39 +2007,6 @@ export default function BusinessStorefrontPage() {
                       {business.services_description}
                     </p>
                   )}
-                </div>
-              )}
-
-              {categories.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    <Tag className="w-3.5 h-3.5" />
-                    <span>{isServiceMode ? "Разделы услуг" : "Категории каталога"}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {categories.map((cat) => {
-                      const count =
-                        cat === "Все" ? products.length : categoryCounts[cat] || 0;
-                      const active = selectedCategory === cat;
-                      return (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCategory(cat);
-                            setMenuOpen(false);
-                          }}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                            active
-                              ? "bg-neutral-950 text-white"
-                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                          }`}
-                        >
-                          {cat} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
               )}
 
@@ -1254,7 +2045,7 @@ export default function BusinessStorefrontPage() {
               {hasSocialLinks && (
                 <div className="space-y-2">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    Связаться с нами
+                    Контакты и соцсети
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {business.whatsapp && (
@@ -1388,21 +2179,22 @@ export default function BusinessStorefrontPage() {
         </div>
       )}
 
-      {/* FLOATING CHAT BUTTON: "Чат с [Название бизнеса]" */}
+      {/* FLOATING AI CHAT BUTTON (POSITIONED ABOVE BOTTOM NAV) */}
       {aiEnabled && (
-        <div className="fixed bottom-4 right-4 z-30">
+        <div className="fixed bottom-20 right-4 z-30">
           <button
             type="button"
             onClick={() => setChatOpen(true)}
-            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white shadow-lg transition text-xs sm:text-sm font-semibold max-w-[260px]"
+            style={{ backgroundColor: brandColor }}
+            className="flex items-center gap-2 px-4 py-3 rounded-2xl text-white shadow-lg hover:opacity-95 transition text-xs font-semibold max-w-[230px]"
           >
             <Bot className="w-4 h-4 shrink-0" />
-            <span className="truncate">Чат с {business.name}</span>
+            <span className="truncate">Чат с {business.pwa_short_name || business.name}</span>
           </button>
         </div>
       )}
 
-      {/* PRODUCT DETAIL POPUP MODAL (MEDIUM-SIZED, WITH GALLERY & FULL DESCRIPTION) */}
+      {/* PRODUCT DETAIL POPUP MODAL (WITH GALLERY + FULL DESCRIPTION + PAYMENT & DELIVERY INFO) */}
       {activeProduct && (
         <div
           onClick={() => setActiveProduct(null)}
@@ -1412,7 +2204,6 @@ export default function BusinessStorefrontPage() {
             onClick={(e) => e.stopPropagation()}
             className="bg-white w-full max-w-md max-h-[88vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl"
           >
-            {/* Photo / Gallery Carousel */}
             <div className="relative bg-slate-100 aspect-[4/3] shrink-0 overflow-hidden">
               {activePhotos.length > 0 ? (
                 <img
@@ -1422,7 +2213,11 @@ export default function BusinessStorefrontPage() {
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-slate-300">
-                  <Package className="w-12 h-12" />
+                  {isServiceMode ? (
+                    <Sparkles className="w-12 h-12" />
+                  ) : (
+                    <Package className="w-12 h-12" />
+                  )}
                 </div>
               )}
 
@@ -1476,7 +2271,6 @@ export default function BusinessStorefrontPage() {
               )}
             </div>
 
-            {/* Thumbnails strip if multiple photos */}
             {activePhotos.length > 1 && (
               <div className="px-4 pt-3 flex gap-2 overflow-x-auto shrink-0">
                 {activePhotos.map((url, idx) => (
@@ -1496,36 +2290,79 @@ export default function BusinessStorefrontPage() {
               </div>
             )}
 
-            {/* Full Title & Description */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-2.5">
-              <div className="flex items-center gap-2">
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {activeProduct.category && (
                   <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
                     {activeProduct.category}
                   </span>
                 )}
-                <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium">
-                  {activeProduct.item_type === "service" ? "Услуга" : "Товар"}
-                </span>
+                {activeProduct.duration_label && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium">
+                    <Clock className="w-3 h-3" />
+                    {activeProduct.duration_label}
+                  </span>
+                )}
+                {Number(activeProduct.cashback_percent || 0) > 0 && (
+                  <span className="px-2 py-0.5 rounded-md bg-[#48B81A] text-white text-[11px] font-bold">
+                    {activeProduct.cashback_percent}% Б кэшбэк
+                  </span>
+                )}
               </div>
 
               <h2 className="text-xl font-bold text-neutral-950 leading-snug">
                 {activeProduct.name}
               </h2>
 
-              <div className="text-xl font-extrabold text-neutral-950">
-                {formatKZT(activeProduct.price)}
+              <div className="flex items-baseline gap-2.5">
+                <div className="text-2xl font-extrabold text-neutral-950 tracking-tight">
+                  {formatKZT(activeProduct.price)}
+                </div>
+                {activeProduct.old_price && activeProduct.old_price > activeProduct.price && (
+                  <div className="text-sm text-slate-400 line-through">
+                    {formatKZT(activeProduct.old_price)}
+                  </div>
+                )}
               </div>
 
-              {activeProduct.description ? (
-                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line pt-1">
+              {activeProduct.description && (
+                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
                   {activeProduct.description}
                 </p>
-              ) : (
-                <p className="text-xs text-slate-400 pt-1">
-                  Подробное описание не указано. Вы можете уточнить детали в чате компании.
-                </p>
               )}
+
+              {/* Payment & Delivery info right inside Product Modal */}
+              <div className="rounded-2xl bg-slate-50 border border-slate-200/70 p-3.5 space-y-2.5">
+                <div className="flex items-start gap-2 text-xs text-slate-700">
+                  <CreditCard className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-neutral-900">Оплата: </span>
+                    {[
+                      hasKaspi ? "Kaspi Pay" : "",
+                      hasHalykApi ? "Halyk ePay" : hasHalyk ? "Halyk Bank" : "",
+                      hasFreedomApi ? "Freedom Pay" : "",
+                      isServiceMode ? "на месте" : "при получении",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </div>
+                </div>
+                <div className="flex items-start gap-2 text-xs text-slate-700">
+                  {isServiceMode ? (
+                    <Calendar className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Truck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-neutral-900">
+                      {isServiceMode ? "Получение: " : "Доставка: "}
+                    </span>
+                    {isServiceMode
+                      ? "Онлайн-запись на удобную дату и время"
+                      : "Самовывоз или доставка курьером"}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="p-4 border-t border-slate-100 bg-white shrink-0 flex items-center gap-2.5">
@@ -1537,7 +2374,8 @@ export default function BusinessStorefrontPage() {
                     setActiveProduct(null);
                     openBookingModal(svc);
                   }}
-                  className="w-full py-3.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition shadow-sm"
+                  style={{ backgroundColor: brandColor }}
+                  className="w-full py-3.5 rounded-xl text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition shadow-sm"
                 >
                   <Calendar className="w-4 h-4" />
                   <span>Записаться — {formatKZT(activeProduct.price)}</span>
@@ -1557,8 +2395,9 @@ export default function BusinessStorefrontPage() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => addToCart(activeProduct)}
-                      className="w-9 h-9 rounded-lg bg-neutral-950 text-white flex items-center justify-center shadow-sm"
+                      onClick={(e) => addToCart(activeProduct, e.currentTarget)}
+                      style={{ backgroundColor: brandColor }}
+                      className="w-9 h-9 rounded-lg text-white flex items-center justify-center shadow-sm"
                     >
                       <Plus className="w-4 h-4" />
                     </button>
@@ -1569,7 +2408,8 @@ export default function BusinessStorefrontPage() {
                       setActiveProduct(null);
                       setCheckoutOpen(true);
                     }}
-                    className="flex-1 py-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold transition"
+                    style={{ backgroundColor: brandColor }}
+                    className="flex-1 py-3 rounded-xl text-white text-sm font-semibold transition"
                   >
                     Перейти в корзину
                   </button>
@@ -1577,8 +2417,9 @@ export default function BusinessStorefrontPage() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => addToCart(activeProduct)}
-                  className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition shadow-sm"
+                  onClick={(e) => addToCart(activeProduct, e.currentTarget)}
+                  style={{ backgroundColor: brandColor }}
+                  className="w-full py-3.5 rounded-xl text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition shadow-sm"
                 >
                   <ShoppingCart className="w-4 h-4" />
                   <span>
@@ -1797,7 +2638,8 @@ export default function BusinessStorefrontPage() {
                 type="submit"
                 form="booking-form"
                 disabled={submittingBooking || kaspiPhoneInvalid}
-                className="w-full py-3.5 rounded-xl bg-neutral-950 text-white font-semibold text-sm hover:bg-neutral-800 disabled:opacity-50 transition"
+                style={{ backgroundColor: brandColor }}
+                className="w-full py-3.5 rounded-xl text-white font-semibold text-sm hover:opacity-95 disabled:opacity-50 transition"
               >
                 {submittingBooking
                   ? "Отправляем запись..."
@@ -1839,7 +2681,6 @@ export default function BusinessStorefrontPage() {
                 </div>
               ) : (
                 <>
-                  {/* Selected Items */}
                   <div className="bg-slate-50 rounded-2xl p-3.5 space-y-2.5">
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                       Выбранные позиции
@@ -1900,7 +2741,6 @@ export default function BusinessStorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Payment Method Selection */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
                       <CreditCard className="w-3.5 h-3.5" />
@@ -1958,7 +2798,6 @@ export default function BusinessStorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Delivery Method Selection */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
                       <Truck className="w-3.5 h-3.5" />
@@ -1999,7 +2838,6 @@ export default function BusinessStorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Contact & Delivery Address Form */}
                   <form id="checkout-form" onSubmit={handleCheckout} className="space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                       Данные для заказа
@@ -2072,7 +2910,8 @@ export default function BusinessStorefrontPage() {
                   type="submit"
                   form="checkout-form"
                   disabled={submittingOrder || kaspiPhoneInvalid}
-                  className="w-full py-3.5 rounded-xl bg-neutral-950 text-white font-semibold text-sm hover:bg-neutral-800 disabled:opacity-50 transition"
+                  style={{ backgroundColor: brandColor }}
+                  className="w-full py-3.5 rounded-xl text-white font-semibold text-sm hover:opacity-95 disabled:opacity-50 transition"
                 >
                   {submittingOrder
                     ? "Переходим к оплате..."
@@ -2088,7 +2927,7 @@ export default function BusinessStorefrontPage() {
         </div>
       )}
 
-      {/* POST-ORDER PAYMENT & RECEIPT MODAL */}
+      {/* POST-ORDER PAYMENT & KASPI RECEIPT MODAL */}
       {orderResult && (
         <div className="fixed inset-0 bg-black/55 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-5 shadow-2xl">
@@ -2159,7 +2998,6 @@ export default function BusinessStorefrontPage() {
 
             {orderResult.paymentMethod === "Kaspi Pay" && hasKaspi && (
               <div className="space-y-3">
-                {/* Step 1: Pay via Kaspi */}
                 <a
                   href={kaspiLink}
                   target="_blank"
@@ -2173,7 +3011,6 @@ export default function BusinessStorefrontPage() {
                   <ExternalLink className="w-4 h-4" />
                 </a>
 
-                {/* Step 2: Upload Receipt right here on the site */}
                 <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-2.5">
                   <div className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-md bg-neutral-950 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
@@ -2216,7 +3053,7 @@ export default function BusinessStorefrontPage() {
                     <>
                       <p className="text-[11px] text-slate-500 leading-relaxed">
                         После оплаты в Kaspi.kz вернитесь сюда и прикрепите скриншот или PDF-чек — он
-                        мгновенно придёт менеджеру вместе с вашим заказом (в WhatsApp писать не нужно).
+                        мгновенно придёт менеджеру вместе с вашим заказом.
                       </p>
                       <label className="w-full py-3 px-4 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition shadow-sm">
                         <Upload className="w-4 h-4" />
@@ -2323,7 +3160,8 @@ export default function BusinessStorefrontPage() {
             <button
               type="button"
               onClick={() => setPaymentReturnModal(null)}
-              className="w-full py-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold transition"
+              style={{ backgroundColor: brandColor }}
+              className="w-full py-3.5 rounded-2xl text-white text-sm font-semibold transition"
             >
               Вернуться на витрину
             </button>
@@ -2333,7 +3171,7 @@ export default function BusinessStorefrontPage() {
 
       {/* CHAT MODAL */}
       {chatOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full max-w-md h-[80vh] sm:h-[75vh] rounded-t-3xl sm:rounded-2xl flex flex-col overflow-hidden shadow-xl">
             <div className="px-4 py-3 bg-neutral-950 text-white flex items-center justify-between">
               <div className="flex items-center gap-2 min-w-0">
