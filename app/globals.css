@@ -3,7 +3,58 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    overscroll-behavior: none;
+    overflow-x: hidden;
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply bg-[#FAFAFB] text-neutral-900 antialiased;
+    overscroll-behavior: none;
+    overflow-x: hidden;
+    max-width: 100vw;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
+
+  /* Убираем случайное выделение текста и контекстное меню на кнопках и навигации */
+  button,
+  a,
+  nav,
+  header,
+  label {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+
+  input,
+  textarea,
+  select {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Главный фикс для iPhone (Safari PWA и Telegram Mini App):
+     iOS автоматически приближает экран при фокусе на поле со шрифтом меньше 16px */
+  @media screen and (max-width: 768px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
+}
+
+/* Скрытие полосы прокрутки в горизонтальных лентах (слайды, категории) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

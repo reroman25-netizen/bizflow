@@ -3,12 +3,12 @@
 import { useEffect } from "react";
 
 interface TelegramWebApp {
-  initData?: string;
-  ready: () => void;
-  expand: () => void;
+  ready?: () => void;
+  expand?: () => void;
+  disableVerticalSwipes?: () => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
-  disableVerticalSwipes?: () => void;
+  isExpanded?: boolean;
 }
 
 declare global {
@@ -19,58 +19,55 @@ declare global {
   }
 }
 
-interface TelegramMiniAppInitProps {
-  onInsideTelegram?: (isInside: boolean) => void;
+function initTelegramApp() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return false;
+
+  try {
+    tg.ready?.();
+    tg.expand?.();
+    tg.disableVerticalSwipes?.();
+    tg.setHeaderColor?.("#ffffff");
+    tg.setBackgroundColor?.("#F7F8FA");
+  } catch {
+    // ignore unsupported methods on older Telegram clients
+  }
+  return true;
 }
 
-export function TelegramMiniAppInit({ onInsideTelegram }: TelegramMiniAppInitProps) {
+export function TelegramMiniAppInit() {
   useEffect(() => {
-    const initWebApp = () => {
-      const tg = window.Telegram?.WebApp;
-      if (!tg) return;
+    if (typeof window === "undefined") return;
 
-      const inside = Boolean(tg.initData && tg.initData.length > 0);
-      if (onInsideTelegram) {
-        onInsideTelegram(inside);
-      }
-
-      if (inside) {
-        tg.ready();
-        tg.expand();
-        try {
-          tg.setHeaderColor?.("#ffffff");
-          tg.setBackgroundColor?.("#F4F5F7");
-          tg.disableVerticalSwipes?.();
-        } catch {
-          // Игнорируем неподдерживаемые методы на старых версиях Telegram
-        }
-      }
+    // 1. Блокируем случайный щипок (pinch-zoom) на iOS Safari / PWA / Telegram WebView
+    const preventGesture = (e: Event) => {
+      e.preventDefault();
     };
+    document.addEventListener("gesturestart", preventGesture, { passive: false });
+    document.addEventListener("gesturechange", preventGesture, { passive: false });
 
-    if (window.Telegram?.WebApp) {
-      initWebApp();
-      return;
+    // 2. Инициализируем Telegram Mini App SDK (если скрипт ещё не подгружен — подгружаем)
+    const initialized = initTelegramApp();
+    if (!initialized) {
+      const existingScript = document.querySelector(
+        'script[src="https://telegram.org/js/telegram-web-app.js"]'
+      );
+      if (existingScript) {
+        existingScript.addEventListener("load", () => initTelegramApp(), { once: true });
+      } else {
+        const script = document.createElement("script");
+        script.src = "https://telegram.org/js/telegram-web-app.js";
+        script.async = true;
+        script.onload = () => initTelegramApp();
+        document.head.appendChild(script);
+      }
     }
-
-    const existingScript = document.querySelector<HTMLScriptElement>(
-      'script[src="https://telegram.org/js/telegram-web-app.js"]'
-    );
-
-    if (existingScript) {
-      existingScript.addEventListener("load", initWebApp);
-      return () => existingScript.removeEventListener("load", initWebApp);
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-web-app.js";
-    script.async = true;
-    script.onload = initWebApp;
-    document.head.appendChild(script);
 
     return () => {
-      script.onload = null;
+      document.removeEventListener("gesturestart", preventGesture);
+      document.removeEventListener("gesturechange", preventGesture);
     };
-  }, [onInsideTelegram]);
+  }, []);
 
   return null;
 }
