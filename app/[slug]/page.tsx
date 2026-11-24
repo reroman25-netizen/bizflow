@@ -54,6 +54,7 @@ import {
 import { formatKZT, formatDate, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
 import { BrandLogo } from "@/components/BrandLogo";
 import { PwaInstallButton } from "@/components/PwaInstallButton";
+import { CATEGORY_PRESETS, CategoryPreset } from "@/lib/categoryPresets";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -96,6 +97,7 @@ interface FlyingItem {
 interface DisplayCategory {
   name: string;
   imageUrl: string;
+  iconKey: string;
   count: number;
 }
 
@@ -599,23 +601,31 @@ export default function BusinessStorefrontPage() {
   const displayCategories: DisplayCategory[] = [];
   const addedCatNames = new Set<string>();
 
+  const presetByKey = new Map<string, CategoryPreset>(
+    CATEGORY_PRESETS.map((p) => [p.key, p])
+  );
+
   for (const cc of customCategories) {
     const cleanName = (cc.name || "").trim();
-    if (!cleanName || addedCatNames.has(cleanName.toLowerCase())) continue;
-    addedCatNames.add(cleanName.toLowerCase());
+    const low = cleanName.toLowerCase();
+    if (!cleanName || low === "основное" || addedCatNames.has(low)) continue;
+    addedCatNames.add(low);
     displayCategories.push({
       name: cleanName,
       imageUrl: cc.image_url?.trim() || categoryFirstImage[cleanName] || "",
+      iconKey: cc.icon_key || "",
       count: categoryCounts[cleanName] || 0,
     });
   }
 
   for (const [catName, cnt] of Object.entries(categoryCounts)) {
-    if (addedCatNames.has(catName.toLowerCase())) continue;
-    addedCatNames.add(catName.toLowerCase());
+    const low = catName.toLowerCase();
+    if (low === "основное" || addedCatNames.has(low)) continue;
+    addedCatNames.add(low);
     displayCategories.push({
       name: catName,
       imageUrl: categoryFirstImage[catName] || "",
+      iconKey: "",
       count: cnt,
     });
   }
@@ -1360,54 +1370,43 @@ export default function BusinessStorefrontPage() {
                     </button>
                   ))}
                 </div>
+                {slides.length > 1 && (
+                  <div className="flex items-center justify-center gap-1.5 pt-2">
+                    {slides.map((s) => (
+                      <span
+                        key={s.id}
+                        className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* HORIZONTAL VISUAL CATEGORIES STRIP */}
+            {/* HORIZONTAL VISUAL CATEGORIES STRIP (ONLY REAL CATEGORIES, TAP AGAIN TO RESET) */}
             {displayCategories.length > 0 && (
               <div className="px-3.5">
                 <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory("Все")}
-                    className="flex flex-col items-center gap-1.5 shrink-0 w-[68px]"
-                  >
-                    <div
-                      className="w-16 h-16 rounded-2xl flex items-center justify-center transition border-2"
-                      style={{
-                        backgroundColor:
-                          selectedCategory === "Все" ? brandColor : "#FFFFFF",
-                        borderColor:
-                          selectedCategory === "Все" ? brandColor : "#F1F5F9",
-                        color: selectedCategory === "Все" ? "#FFFFFF" : "#111827",
-                      }}
-                    >
-                      <LayoutGrid className="w-6 h-6" />
-                    </div>
-                    <span
-                      className={`text-[11px] leading-tight text-center line-clamp-2 ${
-                        selectedCategory === "Все"
-                          ? "font-bold text-neutral-950"
-                          : "font-medium text-slate-600"
-                      }`}
-                    >
-                      Все
-                    </span>
-                  </button>
-
                   {displayCategories.map((cat) => {
                     const active = selectedCategory === cat.name;
+                    const preset = cat.iconKey ? presetByKey.get(cat.iconKey) : undefined;
                     return (
                       <button
                         key={cat.name}
                         type="button"
-                        onClick={() => setSelectedCategory(cat.name)}
-                        className="flex flex-col items-center gap-1.5 shrink-0 w-[68px]"
+                        onClick={() =>
+                          setSelectedCategory((prev) =>
+                            prev === cat.name ? "Все" : cat.name
+                          )
+                        }
+                        className="flex flex-col items-center gap-1.5 shrink-0 w-[66px]"
                       >
                         <div
-                          className="w-16 h-16 rounded-2xl bg-white overflow-hidden flex items-center justify-center transition border-2"
+                          className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center transition border-2"
                           style={{
                             borderColor: active ? brandColor : "#F1F5F9",
+                            backgroundColor:
+                              !cat.imageUrl && preset ? preset.bg : "#FFFFFF",
                           }}
                         >
                           {cat.imageUrl ? (
@@ -1416,6 +1415,8 @@ export default function BusinessStorefrontPage() {
                               alt={cat.name}
                               className="w-full h-full object-cover"
                             />
+                          ) : preset ? (
+                            <span className="text-2xl">{preset.emoji}</span>
                           ) : (
                             <span className="text-sm font-bold text-slate-500">
                               {cat.name.slice(0, 2).toUpperCase()}
@@ -1631,29 +1632,40 @@ export default function BusinessStorefrontPage() {
                     </button>
                   )}
 
-                  {displayCategories.map((cat) => (
-                    <button
-                      key={cat.name}
-                      type="button"
-                      onClick={() => setCatalogSelectedCat(cat.name)}
-                      className="bg-white hover:bg-slate-50 border border-slate-100 rounded-2xl p-2.5 h-32 flex flex-col justify-between text-left transition overflow-hidden relative"
-                    >
-                      <span className="text-[11px] font-semibold text-neutral-900 leading-tight line-clamp-2 z-10">
-                        {cat.name}
-                      </span>
-                      <div className="self-end w-16 h-16 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center shrink-0">
-                        {cat.imageUrl ? (
-                          <img
-                            src={cat.imageUrl}
-                            alt={cat.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <Package className="w-6 h-6 text-slate-300" />
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                  {displayCategories.map((cat) => {
+                    const preset = cat.iconKey ? presetByKey.get(cat.iconKey) : undefined;
+                    return (
+                      <button
+                        key={cat.name}
+                        type="button"
+                        onClick={() => setCatalogSelectedCat(cat.name)}
+                        className="bg-white hover:bg-slate-50 border border-slate-100 rounded-2xl p-2.5 h-32 flex flex-col justify-between text-left transition overflow-hidden relative"
+                      >
+                        <span className="text-[11px] font-semibold text-neutral-900 leading-tight line-clamp-2 z-10">
+                          {cat.name}
+                        </span>
+                        <div
+                          className="self-end w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center shrink-0"
+                          style={{
+                            backgroundColor:
+                              !cat.imageUrl && preset ? preset.bg : "#F1F5F9",
+                          }}
+                        >
+                          {cat.imageUrl ? (
+                            <img
+                              src={cat.imageUrl}
+                              alt={cat.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : preset ? (
+                            <span className="text-3xl">{preset.emoji}</span>
+                          ) : (
+                            <Package className="w-6 h-6 text-slate-300" />
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2292,11 +2304,12 @@ export default function BusinessStorefrontPage() {
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
               <div className="flex flex-wrap items-center gap-1.5">
-                {activeProduct.category && (
-                  <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
-                    {activeProduct.category}
-                  </span>
-                )}
+                {activeProduct.category &&
+                  activeProduct.category.toLowerCase() !== "основное" && (
+                    <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
+                      {activeProduct.category}
+                    </span>
+                  )}
                 {activeProduct.duration_label && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium">
                     <Clock className="w-3 h-3" />

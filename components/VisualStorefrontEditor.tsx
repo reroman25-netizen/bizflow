@@ -157,7 +157,7 @@ export function VisualStorefrontEditor({
       setProdCashback("");
       setProdCategory(
         presetCategoryName ||
-          (selectedCat !== "Все" ? selectedCat : categories[0]?.name || "Основное")
+          (selectedCat !== "Все" ? selectedCat : categories[0]?.name || "")
       );
       setProdDuration("");
       setProdDesc("");
@@ -214,8 +214,9 @@ export function VisualStorefrontEditor({
     });
   }
   for (const [cName, cnt] of Object.entries(productCounts)) {
-    if (seenCats.has(cName.toLowerCase())) continue;
-    seenCats.add(cName.toLowerCase());
+    const low = cName.toLowerCase();
+    if (low === "основное" || seenCats.has(low)) continue;
+    seenCats.add(low);
     mergedCategories.push({
       name: cName,
       imageUrl: productFirstImg[cName] || "",
@@ -490,7 +491,7 @@ export function VisualStorefrontEditor({
     setProdPrice(String(prod.price));
     setProdOldPrice(prod.old_price ? String(prod.old_price) : "");
     setProdCashback(prod.cashback_percent ? String(prod.cashback_percent) : "");
-    setProdCategory(prod.category || "Основное");
+    setProdCategory(prod.category === "Основное" ? "" : prod.category || "");
     setProdDuration(prod.duration_label || "");
     setProdDesc(prod.description || "");
     setProdImageUrl(prod.image_url || "");
@@ -572,7 +573,7 @@ export function VisualStorefrontEditor({
       old_price: validOldPrice,
       cashback_percent: cashbackNum,
       badges: prodBadges,
-      category: prodCategory.trim() || "Основное",
+      category: prodCategory.trim(),
       description: prodDesc.trim(),
       item_type: prodType,
       duration_label: prodDuration.trim(),
@@ -756,20 +757,7 @@ export function VisualStorefrontEditor({
                 <span className="text-[11px] text-slate-400">{slides.length} шт.</span>
               </div>
 
-              <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
-                {/* Plus Tile to Add Slide */}
-                <button
-                  type="button"
-                  onClick={openNewSlideModal}
-                  className="w-36 sm:w-44 h-32 sm:h-36 rounded-2xl border-2 border-dashed border-slate-300 hover:border-neutral-900 bg-white/80 hover:bg-white flex flex-col items-center justify-center gap-1.5 text-slate-500 hover:text-neutral-950 shrink-0 transition"
-                >
-                  <span className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center">
-                    <Plus className="w-5 h-5" />
-                  </span>
-                  <span className="text-xs font-semibold">Добавить слайд</span>
-                  <span className="text-[10px] text-slate-400">Фото / Видео</span>
-                </button>
-
+              <div className="flex gap-2.5 overflow-x-auto pb-1 snap-x snap-mandatory no-scrollbar">
                 {slides.map((slide) => (
                   <button
                     key={slide.id}
@@ -814,6 +802,31 @@ export function VisualStorefrontEditor({
                     </div>
                   </button>
                 ))}
+
+                {/* Always show up to 5 swipeable slide slots (or +1 if 5+ already filled) */}
+                {Array.from({
+                  length: Math.max(1, 5 - slides.length),
+                }).map((_, idx) => {
+                  const slotNumber = slides.length + idx + 1;
+                  return (
+                    <button
+                      key={`empty-slide-${slotNumber}`}
+                      type="button"
+                      onClick={openNewSlideModal}
+                      className="w-56 sm:w-64 h-32 sm:h-36 rounded-2xl border-2 border-dashed border-slate-300 hover:border-neutral-900 bg-white/85 hover:bg-white flex flex-col items-center justify-center gap-1.5 text-slate-500 hover:text-neutral-950 shrink-0 snap-start transition"
+                    >
+                      <span className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center">
+                        <Plus className="w-5 h-5" />
+                      </span>
+                      <span className="text-xs font-semibold">
+                        Слайд {slotNumber}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Фото или видео до 50 МБ
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -847,26 +860,7 @@ export function VisualStorefrontEditor({
                   </span>
                 </button>
 
-                {/* All filter */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedCat("Все")}
-                  className="flex flex-col items-center gap-1.5 shrink-0 w-[68px]"
-                >
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 transition"
-                    style={{
-                      backgroundColor: selectedCat === "Все" ? brandColor : "#FFFFFF",
-                      borderColor: selectedCat === "Все" ? brandColor : "#E2E8F0",
-                      color: selectedCat === "Все" ? "#FFFFFF" : "#111827",
-                    }}
-                  >
-                    <LayoutGrid className="w-6 h-6" />
-                  </div>
-                  <span className="text-[11px] font-semibold text-neutral-800 text-center leading-tight">
-                    Все ({products.length})
-                  </span>
-                </button>
+
 
                 {mergedCategories.map((cat) => {
                   const active = selectedCat === cat.name;
@@ -878,7 +872,7 @@ export function VisualStorefrontEditor({
                     >
                       <button
                         type="button"
-                        onClick={() => setSelectedCat(cat.name)}
+                        onClick={() => setSelectedCat((prev) => (prev === cat.name ? "Все" : cat.name))}
                         className="w-16 h-16 rounded-2xl bg-white overflow-hidden flex items-center justify-center border-2 transition"
                         style={{
                           borderColor: active ? brandColor : "#E2E8F0",
@@ -1334,7 +1328,7 @@ export function VisualStorefrontEditor({
                       ? "Загружаем медиа..."
                       : slideMediaUrl
                       ? "Заменить фото / видео"
-                      : "Выбрать фото (до 5 МБ) или видео (до 15 МБ)"}
+                      : "Выбрать фото (до 15 МБ) или видео (до 50 МБ)"}
                   </span>
                   <input
                     type="file"
@@ -1747,14 +1741,14 @@ export function VisualStorefrontEditor({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
-                    Категория
+                    Категория из каталога
                   </label>
                   <input
                     type="text"
                     list="tiyin-cat-list"
                     value={prodCategory}
                     onChange={(e) => setProdCategory(e.target.value)}
-                    placeholder="Основное"
+                    placeholder="Например: Пицца или Шины"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
                   />
                   <datalist id="tiyin-cat-list">
@@ -1762,6 +1756,27 @@ export function VisualStorefrontEditor({
                       <option key={c.name} value={c.name} />
                     ))}
                   </datalist>
+                  {mergedCategories.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {mergedCategories.map((c) => {
+                        const active = prodCategory.trim() === c.name;
+                        return (
+                          <button
+                            key={c.name}
+                            type="button"
+                            onClick={() => setProdCategory(c.name)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                              active
+                                ? "bg-neutral-950 text-white"
+                                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            }`}
+                          >
+                            {c.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
