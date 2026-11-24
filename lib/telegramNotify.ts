@@ -19,7 +19,6 @@ function getAppBaseUrl(): string {
 
 function buildWebAppButtonMarkup(text: string, path: string): Record<string, unknown> | undefined {
   const baseUrl = getAppBaseUrl();
-  // Telegram требует строго HTTPS для кнопок Mini App (web_app)
   if (!baseUrl.startsWith("https://")) {
     return undefined;
   }
@@ -33,6 +32,35 @@ function buildWebAppButtonMarkup(text: string, path: string): Record<string, unk
       ],
     ],
   };
+}
+
+export function resolveOrderRecipientChatIds(
+  ownerChatId?: string | null,
+  recipients?: unknown
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  if (Array.isArray(recipients) && recipients.length > 0) {
+    for (const item of recipients) {
+      if (item && typeof item === "object" && "chat_id" in item) {
+        const cid = String((item as { chat_id?: unknown }).chat_id || "").trim();
+        if (cid && !seen.has(cid)) {
+          seen.add(cid);
+          result.push(cid);
+        }
+      }
+    }
+    if (result.length > 0) {
+      return result;
+    }
+  }
+
+  const fallback = String(ownerChatId || "").trim();
+  if (fallback) {
+    result.push(fallback);
+  }
+  return result;
 }
 
 export async function sendTelegramMessage(
@@ -67,20 +95,71 @@ export async function sendTelegramMessage(
   }
 }
 
-export async function notifyOwnerNewOrder(params: {
+export async function sendTelegramMedia(params: {
   chatId: string;
+  fileUrl: string;
+  isPdf: boolean;
+  captionHtml: string;
+  replyMarkup?: Record<string, unknown>;
+}): Promise<boolean> {
+  const token = process.env.TELEGRAM_NOTIFY_BOT_TOKEN;
+  const cleanChatId = (params.chatId || "").trim();
+  if (!token || !cleanChatId || !params.fileUrl) return false;
+
+  const method = params.isPdf ? "sendDocument" : "sendPhoto";
+  const mediaField = params.isPdf ? "document" : "photo";
+
+  try {
+    const payload: Record<string, unknown> = {
+      chat_id: cleanChatId,
+      [mediaField]: params.fileUrl,
+      caption: params.captionHtml,
+      parse_mode: "HTML",
+    };
+
+    if (params.replyMarkup) {
+      payload.reply_markup = params.replyMarkup;
+    }
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) return true;
+
+    // Если Telegram не смог скачать файл напрямую по URL — отправляем текстовое сообщение со ссылкой на чек
+    const fallbackText = `${params.captionHtml}\n\n📎 <a href="${escapeHtml(params.fileUrl)}">Открыть / скачать чек</a>`;
+    return sendTelegramMessage(cleanChatId, fallbackText, params.replyMarkup);
+  } catch {
+    const fallbackText = `${params.captionHtml}\n\n📎 <a href="${escapeHtml(params.fileUrl)}">Открыть / скачать чек</a>`;
+    return sendTelegramMessage(cleanChatId, fallbackText, params.replyMarkup);
+  }
+}
+
+export async function notifyOwnerNewOrder(params: {
+  chatId?: string;
+  chatIds?: string[];
   businessName: string;
   orderCode: string;
   source: string;
   clientName: string;
   clientPhone: string;
   paymentMethod?: string;
+  paymentStatusLabel?: string;
   deliveryMethod?: string;
   comment?: string;
   items: { name: string; quantity: number; price: number }[];
   totalPrice: number;
 }) {
-  if (!params.chatId) return;
+  const targets =
+    params.chatIds && params.chatIds.length > 0
+      ? params.chatIds
+      : params.chatId
+      ? [params.chatId]
+      : [];
+  if (targets.length === 0) return;
 
   const sourceName = CHANNEL_LABELS[params.source] || params.source;
   const itemsLines = params.items
@@ -93,7 +172,11 @@ export async function notifyOwnerNewOrder(params: {
     ``,
     `👤 Клиент: ${escapeHtml(params.clientName)}`,
     `📞 Телефон: ${escapeHtml(params.clientPhone)}`,
-    params.paymentMethod ? `💳 Оплата: ${escapeHtml(params.paymentMethod)}` : "",
+    params.paymentMethod
+      ? `💳 Оплата: ${escapeHtml(params.paymentMethod)}${
+          params.paymentStatusLabel ? ` (${escapeHtml(params.paymentStatusLabel)})` : ""
+        }`
+      : "",
     params.deliveryMethod ? `🚚 Получение: ${escapeHtml(params.deliveryMethod)}` : "",
     params.comment ? `📍 Комментарий / адрес: ${escapeHtml(params.comment)}` : "",
     ``,
@@ -109,7 +192,49 @@ export async function notifyOwnerNewOrder(params: {
     "/dashboard?tab=orders"
   );
 
-  await sendTelegramMessage(params.chatId, text, markup);
+  await Promise.allSettled(
+    targets.map((cid) => sendTelegramMessage(cid, text, markup))
+  );
+}
+
+export async function notifyRecipientsKaspiReceipt(params: {
+  chatIds: string[];
+  businessName: string;
+  orderCode: string;
+  clientName: string;
+  clientPhone: string;
+  totalPrice: number;
+  receiptUrl: string;
+  isPdf: boolean;
+}) {
+  if (!params.chatIds || params.chatIds.length === 0) return;
+
+  const captionHtml = [
+    `🧾 <b>Чек оплаты Kaspi Pay — заказ ${escapeHtml(params.orderCode)}</b>`,
+    `Компания: <b>${escapeHtml(params.businessName)}</b>`,
+    `👤 Клиент: ${escapeHtml(params.clientName)}`,
+    `📞 Телефон: ${escapeHtml(params.clientPhone)}`,
+    `💰 Сумма заказа: <b>${new Intl.NumberFormat("ru-RU").format(params.totalPrice)} ₸</b>`,
+    ``,
+    `<i>Проверьте поступление в Kaspi Business и подтвердите оплату в разделе «Заказы».</i>`,
+  ].join("\n");
+
+  const markup = buildWebAppButtonMarkup(
+    "Открыть заказ в кабинете",
+    "/dashboard?tab=orders"
+  );
+
+  await Promise.allSettled(
+    params.chatIds.map((cid) =>
+      sendTelegramMedia({
+        chatId: cid,
+        fileUrl: params.receiptUrl,
+        isPdf: params.isPdf,
+        captionHtml,
+        replyMarkup: markup,
+      })
+    )
+  );
 }
 
 export async function notifyOwnerHandoff(params: {
@@ -170,6 +295,7 @@ export async function notifySuperAdminSubscription(params: {
 
   await sendTelegramMessage(adminChatId, text, markup);
 }
+
 export async function notifyOwnerBillingReminder(params: {
   chatId: string;
   businessName: string;

@@ -60,6 +60,7 @@ export interface BusinessChannelsPublic {
   instagram_enabled: boolean;
   telegram_enabled: boolean;
   owner_telegram_chat_id: string;
+  telegram_order_recipients?: TelegramOrderRecipient[];
 }
 
 export interface BusinessChannelsAdmin extends BusinessChannelsPublic {
@@ -93,6 +94,14 @@ export interface OrderItem {
 
 export type OrderStatus = "new" | "in_progress" | "done" | "cancelled";
 
+export type PaymentStatus = "unpaid" | "pending_review" | "paid" | "failed";
+
+export interface TelegramOrderRecipient {
+  id: string;
+  name: string;
+  chat_id: string;
+}
+
 export interface Order {
   id: string;
   order_code: string;
@@ -104,6 +113,10 @@ export interface Order {
   total_price: number;
   status: OrderStatus;
   payment_method: string;
+  payment_status?: PaymentStatus;
+  payment_provider?: string;
+  receipt_url?: string;
+  receipt_uploaded_at?: string | null;
   delivery_method?: string;
   source?: ChannelType | string;
   created_at: string;

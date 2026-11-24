@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { notifyOwnerNewOrder } from "@/lib/telegramNotify";
+import {
+  notifyOwnerNewOrder,
+  resolveOrderRecipientChatIds,
+} from "@/lib/telegramNotify";
 
 export const dynamic = "force-dynamic";
+
+function isValidKzPhone(raw: string): boolean {
+  const digits = String(raw || "").replace(/\D/g, "");
+  return digits.length === 11 && (digits.startsWith("77") || digits.startsWith("87"));
+}
+
+function detectProvider(paymentMethod: string): string {
+  const low = paymentMethod.toLowerCase();
+  if (low.includes("kaspi")) return "kaspi";
+  if (low.includes("halyk")) return "halyk";
+  if (low.includes("freedom")) return "freedom";
+  return "cash";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,8 +35,28 @@ export async function POST(req: NextRequest) {
       deliveryMethod,
     } = body;
 
-    if (!businessId || !clientName || !clientPhone || !Array.isArray(items) || items.length === 0) {
+    if (
+      !businessId ||
+      !clientName ||
+      !clientPhone ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
       return NextResponse.json({ error: "Заполните все поля заказа" }, { status: 400 });
+    }
+
+    const finalPayment = String(paymentMethod || "Согласуем с менеджером");
+    const paymentProvider = detectProvider(finalPayment);
+    const normalizedPhone = String(clientPhone).trim();
+
+    if (paymentProvider === "kaspi" && !isValidKzPhone(normalizedPhone)) {
+      return NextResponse.json(
+        {
+          error:
+            "Для оплаты через Kaspi Pay введите корректный номер телефона Казахстана (+7 7XX XXX XX XX).",
+        },
+        { status: 400 }
+      );
     }
 
     const admin = getSupabaseAdmin();
@@ -35,7 +71,7 @@ export async function POST(req: NextRequest) {
       admin.from("businesses").select("name").eq("id", businessId).maybeSingle(),
       admin
         .from("business_channels")
-        .select("owner_telegram_chat_id")
+        .select("owner_telegram_chat_id, telegram_order_recipients")
         .eq("business_id", businessId)
         .maybeSingle(),
     ]);
@@ -68,10 +104,8 @@ export async function POST(req: NextRequest) {
     const totalPrice = verifiedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const orderCode = "ORD-" + Math.floor(1000 + Math.random() * 9000);
     const orderSource = String(source || "web");
-    const finalPayment = String(paymentMethod || "Согласуем с менеджером");
     const finalDelivery = String(deliveryMethod || "Самовывоз / Уточнить");
 
-    const normalizedPhone = String(clientPhone).trim();
     const { data: existingClient } = await admin
       .from("clients")
       .select("*")
@@ -108,35 +142,48 @@ export async function POST(req: NextRequest) {
       clientId = newClient?.id || null;
     }
 
-    const { error: orderErr } = await admin.from("orders").insert({
-      order_code: orderCode,
-      business_id: businessId,
-      client_id: clientId,
-      user_id: userId || null,
-      client_name: String(clientName).trim(),
-      client_phone: normalizedPhone,
-      comment: String(comment || "").trim(),
-      items: verifiedItems,
-      total_price: totalPrice,
-      status: "new",
-      source: orderSource,
-      payment_method: finalPayment,
-      delivery_method: finalDelivery,
-    });
+    const { data: createdOrder, error: orderErr } = await admin
+      .from("orders")
+      .insert({
+        order_code: orderCode,
+        business_id: businessId,
+        client_id: clientId,
+        user_id: userId || null,
+        client_name: String(clientName).trim(),
+        client_phone: normalizedPhone,
+        comment: String(comment || "").trim(),
+        items: verifiedItems,
+        total_price: totalPrice,
+        status: "new",
+        source: orderSource,
+        payment_method: finalPayment,
+        payment_provider: paymentProvider,
+        payment_status: "unpaid",
+        delivery_method: finalDelivery,
+      })
+      .select("id")
+      .single();
 
     if (orderErr) {
       return NextResponse.json({ error: orderErr.message }, { status: 500 });
     }
 
-    if (chanRes.data?.owner_telegram_chat_id) {
+    const recipientChatIds = resolveOrderRecipientChatIds(
+      chanRes.data?.owner_telegram_chat_id,
+      chanRes.data?.telegram_order_recipients
+    );
+
+    if (recipientChatIds.length > 0) {
       await notifyOwnerNewOrder({
-        chatId: chanRes.data.owner_telegram_chat_id,
+        chatIds: recipientChatIds,
         businessName: bizRes.data?.name || "TIYIN Space",
         orderCode,
         source: orderSource,
         clientName: String(clientName).trim(),
         clientPhone: normalizedPhone,
         paymentMethod: finalPayment,
+        paymentStatusLabel:
+          paymentProvider === "kaspi" ? "ожидает чек" : undefined,
         deliveryMethod: finalDelivery,
         comment: String(comment || "").trim(),
         items: verifiedItems,
@@ -144,7 +191,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ ok: true, orderCode, totalPrice });
+    return NextResponse.json({
+      ok: true,
+      orderId: createdOrder?.id || "",
+      orderCode,
+      totalPrice,
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Ошибка сервера" },

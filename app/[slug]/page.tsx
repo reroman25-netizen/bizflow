@@ -30,6 +30,9 @@ import {
   Calendar,
   Sparkles,
   Tag,
+  Upload,
+  FileText,
+  ShieldCheck,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Business, Product } from "@/lib/types";
@@ -43,6 +46,7 @@ interface ChatMsg {
 }
 
 interface OrderResult {
+  orderId: string;
   orderCode: string;
   totalPrice: number;
   paymentMethod: string;
@@ -98,6 +102,11 @@ function formatIsoDateRu(iso: string): string {
   const parts = iso.split("-");
   if (parts.length !== 3) return iso;
   return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+function isValidKzPhone(raw: string): boolean {
+  const digits = String(raw || "").replace(/\D/g, "");
+  return digits.length === 11 && (digits.startsWith("77") || digits.startsWith("87"));
 }
 
 function normalizeUrl(raw: string): string {
@@ -172,6 +181,9 @@ export default function BusinessStorefrontPage() {
   const [orderError, setOrderError] = useState("");
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
   const [copiedAmount, setCopiedAmount] = useState(false);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptError, setReceiptError] = useState("");
+  const [receiptUploadedUrl, setReceiptUploadedUrl] = useState("");
   const [addedToast, setAddedToast] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState("Оплата при получении / Уточнить");
@@ -378,6 +390,12 @@ export default function BusinessStorefrontPage() {
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientName.trim() || !clientPhone.trim() || cartItems.length === 0) return;
+    if (paymentMethod === "Kaspi Pay" && !isValidKzPhone(clientPhone)) {
+      setOrderError(
+        "Для оплаты через Kaspi Pay введите корректный номер Казахстана (+7 7XX XXX XX XX)."
+      );
+      return;
+    }
     if (deliveryMethod === "Доставка курьером" && !deliveryAddress.trim()) {
       setOrderError("Пожалуйста, укажите адрес доставки.");
       return;
@@ -415,7 +433,10 @@ export default function BusinessStorefrontPage() {
       if (res.ok) {
         setCart({});
         setCheckoutOpen(false);
+        setReceiptUploadedUrl("");
+        setReceiptError("");
         setOrderResult({
+          orderId: json.orderId || "",
           orderCode: json.orderCode || "ORD",
           totalPrice: Number(json.totalPrice ?? cartTotal),
           paymentMethod,
@@ -434,6 +455,12 @@ export default function BusinessStorefrontPage() {
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bookingService || !clientName.trim() || !clientPhone.trim()) return;
+    if (paymentMethod === "Kaspi Pay" && !isValidKzPhone(clientPhone)) {
+      setBookingError(
+        "Для оплаты через Kaspi Pay введите корректный номер Казахстана (+7 7XX XXX XX XX)."
+      );
+      return;
+    }
     if (!bookingDate || !bookingTime.trim()) {
       setBookingError("Выберите удобную дату и время записи.");
       return;
@@ -473,7 +500,10 @@ export default function BusinessStorefrontPage() {
         const bookedPrice = bookingService.price;
         setBookingService(null);
         setComment("");
+        setReceiptUploadedUrl("");
+        setReceiptError("");
         setOrderResult({
+          orderId: json.orderId || "",
           orderCode: json.orderCode || "ORD",
           totalPrice: Number(json.totalPrice ?? bookedPrice),
           paymentMethod,
@@ -491,6 +521,39 @@ export default function BusinessStorefrontPage() {
       setSubmittingBooking(false);
     }
   };
+
+  const handleUploadReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !orderResult || !business) return;
+    setReceiptError("");
+    setUploadingReceipt(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("orderId", orderResult.orderId);
+      fd.append("orderCode", orderResult.orderCode);
+      fd.append("businessId", business.id);
+
+      const res = await fetch("/api/orders/receipt", {
+        method: "POST",
+        body: fd,
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setReceiptError(json.error || "Не удалось загрузить чек. Попробуйте снова.");
+      } else {
+        setReceiptUploadedUrl(json.receiptUrl || "uploaded");
+      }
+    } catch {
+      setReceiptError("Ошибка сети при загрузке чека.");
+    } finally {
+      setUploadingReceipt(false);
+      e.target.value = "";
+    }
+  };
+
+  const kaspiPhoneInvalid =
+    paymentMethod === "Kaspi Pay" && !isValidKzPhone(clientPhone);
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1526,14 +1589,30 @@ export default function BusinessStorefrontPage() {
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                   required
                 />
-                <input
-                  type="tel"
-                  placeholder="Ваш телефон (WhatsApp)"
-                  value={clientPhone}
-                  onChange={(e) => setClientPhone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
-                  required
-                />
+                <div className="space-y-1">
+                  <input
+                    type="tel"
+                    placeholder="Ваш телефон (+7 7XX XXX XX XX)"
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(e.target.value)}
+                    className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 ${
+                      kaspiPhoneInvalid
+                        ? "border-amber-400 bg-amber-50/40"
+                        : "border-slate-300"
+                    }`}
+                    required
+                  />
+                  {paymentMethod === "Kaspi Pay" && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-amber-800 px-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>
+                        {kaspiPhoneInvalid
+                          ? "Для оплаты через Kaspi Pay укажите полный номер (+7 7XX XXX XX XX)"
+                          : "Номер подтверждён — можно перейти к оплате Kaspi Pay"}
+                      </span>
+                    </div>
+                  )}
+                </div>
                 <input
                   type="text"
                   placeholder="Комментарий (марка авто, мастер, пожелания)"
@@ -1554,7 +1633,7 @@ export default function BusinessStorefrontPage() {
               <button
                 type="submit"
                 form="booking-form"
-                disabled={submittingBooking}
+                disabled={submittingBooking || kaspiPhoneInvalid}
                 className="w-full py-3.5 rounded-xl bg-neutral-950 text-white font-semibold text-sm hover:bg-neutral-800 disabled:opacity-50 transition"
               >
                 {submittingBooking
@@ -1777,14 +1856,30 @@ export default function BusinessStorefrontPage() {
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                       required
                     />
-                    <input
-                      type="tel"
-                      placeholder="Ваш телефон (WhatsApp / Kaspi)"
-                      value={clientPhone}
-                      onChange={(e) => setClientPhone(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
-                      required
-                    />
+                    <div className="space-y-1">
+                      <input
+                        type="tel"
+                        placeholder="Ваш телефон (+7 7XX XXX XX XX)"
+                        value={clientPhone}
+                        onChange={(e) => setClientPhone(e.target.value)}
+                        className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 ${
+                          kaspiPhoneInvalid
+                            ? "border-amber-400 bg-amber-50/40"
+                            : "border-slate-300"
+                        }`}
+                        required
+                      />
+                      {paymentMethod === "Kaspi Pay" && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-amber-800 px-1">
+                          <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>
+                            {kaspiPhoneInvalid
+                              ? "Для оплаты через Kaspi Pay обязательно укажите номер (+7 7XX XXX XX XX)"
+                              : "Номер указан верно — после оплаты сможете прикрепить чек прямо здесь"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     <input
                       type="text"
                       placeholder="Комментарий к заказу (время, пожелания)"
@@ -1808,7 +1903,7 @@ export default function BusinessStorefrontPage() {
                 <button
                   type="submit"
                   form="checkout-form"
-                  disabled={submittingOrder}
+                  disabled={submittingOrder || kaspiPhoneInvalid}
                   className="w-full py-3.5 rounded-xl bg-neutral-950 text-white font-semibold text-sm hover:bg-neutral-800 disabled:opacity-50 transition"
                 >
                   {submittingOrder
@@ -1893,7 +1988,8 @@ export default function BusinessStorefrontPage() {
             </div>
 
             {orderResult.paymentMethod === "Kaspi Pay" && hasKaspi && (
-              <div className="space-y-2.5">
+              <div className="space-y-3">
+                {/* Step 1: Pay via Kaspi */}
                 <a
                   href={kaspiLink}
                   target="_blank"
@@ -1901,16 +1997,81 @@ export default function BusinessStorefrontPage() {
                   className="w-full py-3.5 px-4 rounded-2xl bg-[#F14635] hover:bg-[#d93b2b] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition"
                 >
                   <span className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center text-xs font-extrabold">
-                    K
+                    1
                   </span>
                   <span>Оплатить через Kaspi Pay</span>
                   <ExternalLink className="w-4 h-4" />
                 </a>
-                <p className="text-[11px] text-slate-500 text-center leading-relaxed">
-                  Нажмите кнопку, введите сумму{" "}
-                  <strong>{formatKZT(orderResult.totalPrice)}</strong> в приложении Kaspi.kz
-                  и отправьте чек в WhatsApp компании.
-                </p>
+
+                {/* Step 2: Upload Receipt right here on the site */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-md bg-neutral-950 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                      2
+                    </span>
+                    <span className="text-xs font-bold text-neutral-950">
+                      Прикрепите чек об оплате прямо здесь
+                    </span>
+                  </div>
+
+                  {receiptUploadedUrl ? (
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Чек отправлен в компанию вместе с заказом!</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <a
+                          href={receiptUploadedUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-semibold text-emerald-700 hover:underline inline-flex items-center gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Открыть загруженный чек
+                        </a>
+                        <label className="text-[11px] font-medium text-slate-500 hover:text-neutral-900 cursor-pointer">
+                          Заменить
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf"
+                            onChange={handleUploadReceipt}
+                            disabled={uploadingReceipt}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        После оплаты в Kaspi.kz вернитесь сюда и прикрепите скриншот или PDF-чек — он
+                        мгновенно придёт менеджеру вместе с вашим заказом (в WhatsApp писать не нужно).
+                      </p>
+                      <label className="w-full py-3 px-4 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition shadow-sm">
+                        <Upload className="w-4 h-4" />
+                        <span>
+                          {uploadingReceipt
+                            ? "Отправляем чек..."
+                            : "Прикрепить чек (фото или PDF)"}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={handleUploadReceipt}
+                          disabled={uploadingReceipt}
+                          className="hidden"
+                        />
+                      </label>
+                    </>
+                  )}
+
+                  {receiptError && (
+                    <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                      {receiptError}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1919,12 +2080,16 @@ export default function BusinessStorefrontPage() {
                 href={buildWhatsappReceiptUrl(orderResult)}
                 target="_blank"
                 rel="noreferrer"
-                className="w-full py-3 px-4 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-semibold text-sm flex items-center justify-center gap-2 transition"
+                className={
+                  orderResult.paymentMethod === "Kaspi Pay"
+                    ? "w-full py-2 px-3 rounded-xl text-slate-500 hover:bg-slate-100 text-xs font-medium flex items-center justify-center gap-1.5 transition"
+                    : "w-full py-3 px-4 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-semibold text-sm flex items-center justify-center gap-2 transition"
+                }
               >
                 <MessageCircle className="w-4 h-4 text-emerald-600" />
                 <span>
                   {orderResult.paymentMethod === "Kaspi Pay"
-                    ? "Отправить чек в WhatsApp"
+                    ? "Есть вопрос? Написать в WhatsApp"
                     : "Связаться по заказу в WhatsApp"}
                 </span>
               </a>
