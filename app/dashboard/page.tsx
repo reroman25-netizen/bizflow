@@ -36,6 +36,9 @@ import {
   FileText,
   Download,
   UserPlus,
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
@@ -111,6 +114,25 @@ export default function DashboardPage() {
   const [tgRecMessage, setTgRecMessage] = useState("");
   const [tgRecError, setTgRecError] = useState("");
   const [testingChatId, setTestingChatId] = useState<string | null>(null);
+
+  // Bank API Payment Settings (Halyk ePay & Freedom Pay)
+  const [halykApiEnabled, setHalykApiEnabled] = useState(false);
+  const [halykClientId, setHalykClientId] = useState("");
+  const [halykClientSecret, setHalykClientSecret] = useState("");
+  const [halykTerminalId, setHalykTerminalId] = useState("");
+  const [halykHasSecret, setHalykHasSecret] = useState(false);
+  const [halykTestMode, setHalykTestMode] = useState(true);
+  const [showHalykGuide, setShowHalykGuide] = useState(false);
+
+  const [freedomApiEnabled, setFreedomApiEnabled] = useState(false);
+  const [freedomMerchantId, setFreedomMerchantId] = useState("");
+  const [freedomSecretKey, setFreedomSecretKey] = useState("");
+  const [freedomHasSecret, setFreedomHasSecret] = useState(false);
+  const [freedomTestMode, setFreedomTestMode] = useState(true);
+  const [showFreedomGuide, setShowFreedomGuide] = useState(false);
+
+  const [savingPayments, setSavingPayments] = useState(false);
+  const [paymentSaveError, setPaymentSaveError] = useState("");
   const [addProductOpen, setAddProductOpen] = useState(false);
 
   const [origin, setOrigin] = useState("https://tiyin.kz");
@@ -171,6 +193,8 @@ export default function DashboardPage() {
       billing_note: (biz as Business).billing_note || "",
       kaspi_pay_link: (biz as Business).kaspi_pay_link || "",
       halyk_enabled: Boolean((biz as Business).halyk_enabled),
+      halyk_api_enabled: Boolean((biz as Business).halyk_api_enabled),
+      freedom_api_enabled: Boolean((biz as Business).freedom_api_enabled),
     };
     setBusiness(typedBiz);
 
@@ -255,6 +279,29 @@ export default function DashboardPage() {
         // ignore
       } finally {
         setTgRecipientsLoading(false);
+      }
+
+      try {
+        const payRes = await fetch("/api/dashboard/payment-settings", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (payRes.ok) {
+          const payJson = await payRes.json();
+          const s = payJson.settings;
+          if (s) {
+            setHalykApiEnabled(Boolean(s.halyk_api_enabled));
+            setHalykClientId(s.halyk_client_id || "");
+            setHalykTerminalId(s.halyk_terminal_id || "");
+            setHalykHasSecret(Boolean(s.halyk_has_secret));
+            setHalykTestMode(s.halyk_test_mode ?? true);
+            setFreedomApiEnabled(Boolean(s.freedom_api_enabled));
+            setFreedomMerchantId(s.freedom_merchant_id || "");
+            setFreedomHasSecret(Boolean(s.freedom_has_secret));
+            setFreedomTestMode(s.freedom_test_mode ?? true);
+          }
+        }
+      } catch {
+        // ignore
       }
     };
 
@@ -352,6 +399,59 @@ export default function DashboardPage() {
 
     if (!error) {
       showNotice("Изменения сохранены и уже видны на витрине.");
+    }
+  };
+
+  const handleSavePaymentSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!business || !accessToken) return;
+    setSavingPayments(true);
+    setPaymentSaveError("");
+    try {
+      const res = await fetch("/api/dashboard/payment-settings", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
+          halyk_enabled: Boolean(business.halyk_enabled),
+          halyk_api_enabled: halykApiEnabled,
+          halyk_client_id: halykClientId.trim(),
+          halyk_client_secret: halykClientSecret.trim(),
+          halyk_terminal_id: halykTerminalId.trim(),
+          halyk_test_mode: halykTestMode,
+          freedom_api_enabled: freedomApiEnabled,
+          freedom_merchant_id: freedomMerchantId.trim(),
+          freedom_secret_key: freedomSecretKey.trim(),
+          freedom_test_mode: freedomTestMode,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setPaymentSaveError(json.error || "Не удалось сохранить настройки оплаты.");
+        return;
+      }
+      const s = json.settings;
+      if (s) {
+        setBusiness({
+          ...business,
+          kaspi_pay_link: s.kaspi_pay_link,
+          halyk_enabled: s.halyk_enabled,
+          halyk_api_enabled: s.halyk_api_enabled,
+          freedom_api_enabled: s.freedom_api_enabled,
+        });
+        setHalykHasSecret(Boolean(s.halyk_has_secret));
+        setFreedomHasSecret(Boolean(s.freedom_has_secret));
+        setHalykClientSecret("");
+        setFreedomSecretKey("");
+      }
+      showNotice("Настройки оплаты сохранены и уже активны на витрине!");
+    } catch {
+      setPaymentSaveError("Ошибка соединения с сервером.");
+    } finally {
+      setSavingPayments(false);
     }
   };
 
@@ -881,7 +981,10 @@ export default function DashboardPage() {
       : orders.filter((o) => (o.source || "web") === orderSourceFilter);
 
   const hasPaymentConfigured =
-    Boolean(business.kaspi_pay_link?.trim()) || Boolean(business.halyk_enabled);
+    Boolean(business.kaspi_pay_link?.trim()) ||
+    Boolean(business.halyk_enabled) ||
+    Boolean(business.halyk_api_enabled) ||
+    Boolean(business.freedom_api_enabled);
   const hasContactsConfigured = Boolean(
     business.phone?.trim() ||
       business.whatsapp?.trim() ||
@@ -1467,8 +1570,13 @@ export default function DashboardPage() {
                                   {src.label}
                                 </span>
                                 {payStatus === "paid" && (
-                                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700">
+                                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
                                     Оплачено
+                                    {ord.payment_provider === "halyk"
+                                      ? " · Halyk ePay"
+                                      : ord.payment_provider === "freedom"
+                                      ? " · Freedom Pay"
+                                      : ""}
                                   </span>
                                 )}
                                 {payStatus === "pending_review" && (
@@ -1479,6 +1587,18 @@ export default function DashboardPage() {
                                 {payStatus === "unpaid" && isKaspi && (
                                   <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-600">
                                     Ожидает чек Kaspi
+                                  </span>
+                                )}
+                                {payStatus === "unpaid" &&
+                                  (ord.payment_provider === "halyk" ||
+                                    ord.payment_provider === "freedom") && (
+                                    <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-700">
+                                      Ожидает онлайн-оплату
+                                    </span>
+                                  )}
+                                {payStatus === "failed" && (
+                                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-red-50 text-red-700">
+                                    Оплата не прошла
                                   </span>
                                 )}
                                 <span className="text-xs text-slate-400">
@@ -2177,13 +2297,18 @@ export default function DashboardPage() {
                       </span>
                       <div>
                         <div className="font-semibold text-sm text-neutral-950">
-                          Подключение оплаты (Kaspi / Halyk)
+                          Подключение оплаты (Kaspi / Halyk / Freedom)
                         </div>
                         <div className="text-xs text-slate-500">
                           {hasPaymentConfigured
                             ? [
                                 business.kaspi_pay_link?.trim() ? "Kaspi Pay" : "",
-                                business.halyk_enabled ? "Halyk" : "",
+                                business.halyk_api_enabled
+                                  ? "Halyk ePay API"
+                                  : business.halyk_enabled
+                                  ? "Halyk"
+                                  : "",
+                                business.freedom_api_enabled ? "Freedom Pay API" : "",
                               ]
                                 .filter(Boolean)
                                 .join(" • ")
@@ -2710,24 +2835,54 @@ export default function DashboardPage() {
 
             {/* SUB-SECTION: PAYMENTS */}
             {settingsSection === "payments" && (
-              <form onSubmit={handleSaveBusiness} className="space-y-4 max-w-2xl">
-                <h1 className="text-2xl font-bold text-neutral-950">Подключение оплаты</h1>
+              <form onSubmit={handleSavePaymentSettings} className="space-y-4 max-w-2xl">
+                <div>
+                  <h1 className="text-2xl font-bold text-neutral-950">
+                    Подключение оплаты
+                  </h1>
+                  <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+                    Подключите удобные способы оплаты — клиенты увидят их прямо в корзине и при записи.
+                  </p>
+                </div>
 
+                {/* Why Online API Payments Banner */}
+                <div className="rounded-3xl bg-gradient-to-br from-neutral-950 to-slate-900 text-white p-5 shadow-sm space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Почему онлайн-оплата (Halyk ePay / Freedom Pay) удобнее</span>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-2.5 text-xs text-white/85">
+                    <div className="bg-white/[0.07] rounded-2xl p-3">
+                      <div className="font-semibold text-white mb-0.5">Оплата в 1 клик</div>
+                      Клиент платит картой любого банка, Apple Pay или Google Pay прямо на витрине.
+                    </div>
+                    <div className="bg-white/[0.07] rounded-2xl p-3">
+                      <div className="font-semibold text-white mb-0.5">Без проверки чеков</div>
+                      Банк сам мгновенно подтверждает оплату — заказ сразу приходит в Telegram со статусом «Оплачено».
+                    </div>
+                    <div className="bg-white/[0.07] rounded-2xl p-3">
+                      <div className="font-semibold text-white mb-0.5">0% от TIYIN</div>
+                      Деньги поступают напрямую на ваш счёт ИП/ТОО в банке по вашему тарифу эквайринга.
+                    </div>
+                  </div>
+                </div>
+
+                {/* 1. KASPI PAY */}
                 <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-xl bg-[#F14635] text-white font-extrabold text-sm flex items-center justify-center">
+                      <span className="w-10 h-10 rounded-xl bg-[#F14635] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
                         K
                       </span>
                       <div>
                         <div className="font-bold text-neutral-950">Kaspi Pay (ссылка QR)</div>
                         <div className="text-xs text-slate-500">
-                          Появится как способ оплаты при оформлении в корзине
+                          Клиент переходит по ссылке, оплачивает и прикрепляет чек прямо на сайте
                         </div>
                       </div>
                     </div>
                     <span
-                      className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${
                         business.kaspi_pay_link?.trim()
                           ? "bg-emerald-50 text-emerald-700"
                           : "bg-slate-100 text-slate-500"
@@ -2750,41 +2905,306 @@ export default function DashboardPage() {
                       placeholder="https://pay.kaspi.kz/pay/..."
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                     />
+                    <p className="text-[11px] text-slate-400 mt-1.5">
+                      В целях безопасности клиент не сможет перейти к оплате Kaspi Pay, пока не укажет свой номер телефона. Загруженный чек автоматически придёт вам в «Заказы» и в Telegram.
+                    </p>
                   </div>
                 </div>
 
-                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-2">
+                {/* 2. HALYK EPAY API */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-xl bg-[#00805F] text-white font-extrabold text-sm flex items-center justify-center">
+                      <span className="w-10 h-10 rounded-xl bg-[#00805F] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
                         H
                       </span>
                       <div>
-                        <div className="font-bold text-neutral-950">Halyk Bank / ePay</div>
+                        <div className="font-bold text-neutral-950">Halyk ePay (Онлайн-оплата API)</div>
                         <div className="text-xs text-slate-500">
-                          Отображать в списке способов оплаты в корзине
+                          Автоматический приём карт Visa/Mastercard, Apple Pay, Google Pay
                         </div>
                       </div>
                     </div>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
+
+                    <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                      <span className="text-xs font-semibold text-slate-600">
+                        {halykApiEnabled ? "Вкл" : "Выкл"}
+                      </span>
                       <input
                         type="checkbox"
-                        checked={Boolean(business.halyk_enabled)}
-                        onChange={(e) =>
-                          setBusiness({ ...business, halyk_enabled: e.target.checked })
-                        }
-                        className="w-5 h-5 rounded border-slate-300 accent-neutral-950"
+                        checked={halykApiEnabled}
+                        onChange={(e) => setHalykApiEnabled(e.target.checked)}
+                        className="w-5 h-5 rounded border-slate-300 accent-[#00805F]"
                       />
                     </label>
                   </div>
+
+                  {/* Test / Production mode toggle */}
+                  <div className="flex items-center justify-between gap-3 bg-slate-50 rounded-2xl px-3.5 py-2.5 border border-slate-200/70">
+                    <div>
+                      <div className="text-xs font-semibold text-neutral-900">
+                        Режим работы Halyk ePay
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {halykTestMode
+                          ? "Тестовый режим (для проверки ключей перед запуском)"
+                          : "Боевой режим (принимаются реальные платежи)"}
+                      </div>
+                    </div>
+                    <div className="inline-flex p-0.5 rounded-xl bg-slate-200/80">
+                      <button
+                        type="button"
+                        onClick={() => setHalykTestMode(true)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                          halykTestMode
+                            ? "bg-white text-neutral-950 shadow-sm"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Тест
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHalykTestMode(false)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                          !halykTestMode
+                            ? "bg-[#00805F] text-white shadow-sm"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Боевой
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Client ID
+                      </label>
+                      <input
+                        type="text"
+                        value={halykClientId}
+                        onChange={(e) => setHalykClientId(e.target.value)}
+                        placeholder="Например: myshop_client"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Terminal ID
+                      </label>
+                      <input
+                        type="text"
+                        value={halykTerminalId}
+                        onChange={(e) => setHalykTerminalId(e.target.value)}
+                        placeholder="Например: 67e34d63-..."
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-medium text-slate-600">
+                        Client Secret (API ключ)
+                      </label>
+                      {halykHasSecret && (
+                        <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                          Ключ сохранён (защищён)
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      value={halykClientSecret}
+                      onChange={(e) => setHalykClientSecret(e.target.value)}
+                      placeholder={
+                        halykHasSecret
+                          ? "Оставьте пустым, чтобы не менять сохранённый ключ"
+                          : "Вставьте Client Secret от Halyk Bank"
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    />
+                  </div>
+
+                  {/* Collapsible guide for Halyk */}
+                  <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/50 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowHalykGuide((prev) => !prev)}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-semibold text-emerald-900"
+                    >
+                      <span>Как получить API ключи в Halyk Bank (3 шага)</span>
+                      {showHalykGuide ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </button>
+                    {showHalykGuide && (
+                      <div className="px-3.5 pb-3.5 text-[11px] text-emerald-950 space-y-1.5 leading-relaxed border-t border-emerald-200/50 pt-2.5">
+                        <div>
+                          1. Откройте приложение <strong>Onlinebank</strong> (Halyk для бизнеса) → раздел <strong>«Интернет-эквайринг / ePay»</strong> и подайте заявку на подключение онлайн-оплаты для сайта <span className="font-mono">tiyin.kz/{business.slug}</span>.
+                        </div>
+                        <div>
+                          2. После одобрения банк пришлёт на почту 3 параметра: <strong>Client ID</strong>, <strong>Client Secret</strong> и <strong>Terminal ID</strong> (сначала тестовые, затем боевые).
+                        </div>
+                        <div>
+                          3. Вставьте их в поля выше, включите переключатель Halyk ePay и нажмите <strong>Сохранить</strong>. Всё остальное (получение токена, окно оплаты и мгновенное подтверждение в Telegram) TIYIN сделает сам.
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* 3. FREEDOM PAY API */}
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-10 h-10 rounded-xl bg-[#00B140] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                        F
+                      </span>
+                      <div>
+                        <div className="font-bold text-neutral-950">Freedom Pay (Freedom Bank API)</div>
+                        <div className="text-xs text-slate-500">
+                          Приём карт всех банков РК, Apple Pay, Google Pay, Freedom рассрочка
+                        </div>
+                      </div>
+                    </div>
+
+                    <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                      <span className="text-xs font-semibold text-slate-600">
+                        {freedomApiEnabled ? "Вкл" : "Выкл"}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={freedomApiEnabled}
+                        onChange={(e) => setFreedomApiEnabled(e.target.checked)}
+                        className="w-5 h-5 rounded border-slate-300 accent-[#00B140]"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Test / Production mode toggle */}
+                  <div className="flex items-center justify-between gap-3 bg-slate-50 rounded-2xl px-3.5 py-2.5 border border-slate-200/70">
+                    <div>
+                      <div className="text-xs font-semibold text-neutral-900">
+                        Режим работы Freedom Pay
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {freedomTestMode
+                          ? "Тестовый режим (pg_testing_mode = 1)"
+                          : "Боевой режим (принимаются реальные платежи)"}
+                      </div>
+                    </div>
+                    <div className="inline-flex p-0.5 rounded-xl bg-slate-200/80">
+                      <button
+                        type="button"
+                        onClick={() => setFreedomTestMode(true)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                          freedomTestMode
+                            ? "bg-white text-neutral-950 shadow-sm"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Тест
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFreedomTestMode(false)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                          !freedomTestMode
+                            ? "bg-[#00B140] text-white shadow-sm"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Боевой
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Merchant ID (ID магазина)
+                      </label>
+                      <input
+                        type="text"
+                        value={freedomMerchantId}
+                        onChange={(e) => setFreedomMerchantId(e.target.value)}
+                        placeholder="Например: 551234"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-medium text-slate-600">
+                          Secret Key (для приёма)
+                        </label>
+                        {freedomHasSecret && (
+                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                            Сохранён
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={freedomSecretKey}
+                        onChange={(e) => setFreedomSecretKey(e.target.value)}
+                        placeholder={
+                          freedomHasSecret
+                            ? "Оставьте пустым, чтобы не менять"
+                            : "Секретный ключ магазина"
+                        }
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Collapsible guide for Freedom Pay */}
+                  <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/50 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowFreedomGuide((prev) => !prev)}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-semibold text-emerald-900"
+                    >
+                      <span>Как получить API ключи в Freedom Bank / Freedom Pay (3 шага)</span>
+                      {showFreedomGuide ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </button>
+                    {showFreedomGuide && (
+                      <div className="px-3.5 pb-3.5 text-[11px] text-emerald-950 space-y-1.5 leading-relaxed border-t border-emerald-200/50 pt-2.5">
+                        <div>
+                          1. Оставьте заявку на сайте <strong>freedompay.kz</strong> (для ИП или ТОО), укажите адрес витрины <span className="font-mono">https://tiyin.kz/{business.slug}</span>.
+                        </div>
+                        <div>
+                          2. После подписания договора войдите в личный кабинет Freedom Pay → <strong>«Настройки магазина»</strong> и скопируйте <strong>ID магазина (Merchant ID)</strong> и <strong>Секретный ключ для приёма платежей (Secret Key)</strong>.
+                        </div>
+                        <div>
+                          3. Вставьте их выше, включите Freedom Pay и нажмите <strong>Сохранить</strong>. Подтверждение оплаты и отправка заказа в Telegram сработают автоматически.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {paymentSaveError && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
+                    {paymentSaveError}
+                  </div>
+                )}
 
                 <button
                   type="submit"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
+                  disabled={savingPayments}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 disabled:opacity-50 transition shadow-sm"
                 >
                   <Save className="w-4 h-4" />
-                  Сохранить способы оплаты
+                  {savingPayments ? "Сохраняем..." : "Сохранить настройки оплаты"}
                 </button>
               </form>
             )}

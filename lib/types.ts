@@ -41,6 +41,8 @@ export interface Business {
   billing_note?: string;
   kaspi_pay_link?: string;
   halyk_enabled?: boolean;
+  halyk_api_enabled?: boolean;
+  freedom_api_enabled?: boolean;
   is_active: boolean;
   created_at?: string;
 }
@@ -178,4 +180,18 @@ export interface BillingPayment {
   paid_at: string;
   comment: string;
   created_at: string;
+}
+
+export interface PaymentSettingsPublic {
+  kaspi_pay_link: string;
+  halyk_enabled: boolean;
+  halyk_api_enabled: boolean;
+  halyk_client_id: string;
+  halyk_terminal_id: string;
+  halyk_has_secret: boolean;
+  halyk_test_mode: boolean;
+  freedom_api_enabled: boolean;
+  freedom_merchant_id: string;
+  freedom_has_secret: boolean;
+  freedom_test_mode: boolean;
 }

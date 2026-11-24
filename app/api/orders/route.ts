@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
         .select("id, name, price")
         .eq("business_id", businessId)
         .in("id", productIds),
-      admin.from("businesses").select("name").eq("id", businessId).maybeSingle(),
+      admin.from("businesses").select("name, halyk_api_enabled, freedom_api_enabled").eq("id", businessId).maybeSingle(),
       admin
         .from("business_channels")
         .select("owner_telegram_chat_id, telegram_order_recipients")
@@ -168,27 +168,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: orderErr.message }, { status: 500 });
     }
 
-    const recipientChatIds = resolveOrderRecipientChatIds(
-      chanRes.data?.owner_telegram_chat_id,
-      chanRes.data?.telegram_order_recipients
-    );
+    const requiresOnlinePayment =
+      (paymentProvider === "halyk" && Boolean(bizRes.data?.halyk_api_enabled)) ||
+      (paymentProvider === "freedom" && Boolean(bizRes.data?.freedom_api_enabled));
 
-    if (recipientChatIds.length > 0) {
-      await notifyOwnerNewOrder({
-        chatIds: recipientChatIds,
-        businessName: bizRes.data?.name || "TIYIN Space",
-        orderCode,
-        source: orderSource,
-        clientName: String(clientName).trim(),
-        clientPhone: normalizedPhone,
-        paymentMethod: finalPayment,
-        paymentStatusLabel:
-          paymentProvider === "kaspi" ? "ожидает чек" : undefined,
-        deliveryMethod: finalDelivery,
-        comment: String(comment || "").trim(),
-        items: verifiedItems,
-        totalPrice,
-      });
+    // Для онлайн-оплаты через Halyk ePay / Freedom Pay уведомление отправим мгновенно после подтверждения от банка (вебхука)
+    if (!requiresOnlinePayment) {
+      const recipientChatIds = resolveOrderRecipientChatIds(
+        chanRes.data?.owner_telegram_chat_id,
+        chanRes.data?.telegram_order_recipients
+      );
+
+      if (recipientChatIds.length > 0) {
+        await notifyOwnerNewOrder({
+          chatIds: recipientChatIds,
+          businessName: bizRes.data?.name || "TIYIN Space",
+          orderCode,
+          source: orderSource,
+          clientName: String(clientName).trim(),
+          clientPhone: normalizedPhone,
+          paymentMethod: finalPayment,
+          paymentStatusLabel:
+            paymentProvider === "kaspi" ? "ожидает чек" : undefined,
+          deliveryMethod: finalDelivery,
+          comment: String(comment || "").trim(),
+          items: verifiedItems,
+          totalPrice,
+        });
+      }
+
+      if (createdOrder?.id) {
+        await admin
+          .from("orders")
+          .update({ notified_at: new Date().toISOString() })
+          .eq("id", createdOrder.id);
+      }
     }
 
     return NextResponse.json({
@@ -196,6 +210,8 @@ export async function POST(req: NextRequest) {
       orderId: createdOrder?.id || "",
       orderCode,
       totalPrice,
+      requiresOnlinePayment,
+      paymentProvider,
     });
   } catch (err) {
     return NextResponse.json(

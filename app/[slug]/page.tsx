@@ -109,6 +109,26 @@ function isValidKzPhone(raw: string): boolean {
   return digits.length === 11 && (digits.startsWith("77") || digits.startsWith("87"));
 }
 
+function loadExternalScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === "undefined") {
+      reject(new Error("Browser only"));
+      return;
+    }
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Не удалось загрузить платёжный виджет банка."));
+    document.head.appendChild(script);
+  });
+}
+
 function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
@@ -184,6 +204,11 @@ export default function BusinessStorefrontPage() {
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [receiptError, setReceiptError] = useState("");
   const [receiptUploadedUrl, setReceiptUploadedUrl] = useState("");
+  const [paymentReturnModal, setPaymentReturnModal] = useState<{
+    status: "success" | "failed";
+    orderCode: string;
+    provider: string;
+  } | null>(null);
   const [addedToast, setAddedToast] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState("Оплата при получении / Уточнить");
@@ -207,6 +232,28 @@ export default function BusinessStorefrontPage() {
   ]);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const pStatus = sp.get("payment");
+      const pOrder = sp.get("order") || "";
+      const pProvider = sp.get("provider") || "";
+      if (pStatus === "success" || pStatus === "failed") {
+        setPaymentReturnModal({
+          status: pStatus,
+          orderCode: pOrder,
+          provider:
+            pProvider === "halyk"
+              ? "Halyk ePay"
+              : pProvider === "freedom"
+              ? "Freedom Pay"
+              : "Онлайн-оплата",
+        });
+        // Очищаем параметры из адресной строки
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+    }
+
     const loadStorefront = async () => {
       const supabase = getSupabaseClient();
 
@@ -238,7 +285,11 @@ export default function BusinessStorefrontPage() {
       setBusiness(typedBiz);
       setChatSessionId(getOrCreateChatSessionId(typedBiz.id));
 
-      if (typedBiz.kaspi_pay_link?.trim()) {
+      if (typedBiz.halyk_api_enabled) {
+        setPaymentMethod("Halyk ePay");
+      } else if (typedBiz.freedom_api_enabled) {
+        setPaymentMethod("Freedom Pay");
+      } else if (typedBiz.kaspi_pay_link?.trim()) {
         setPaymentMethod("Kaspi Pay");
       } else if (typedBiz.halyk_enabled) {
         setPaymentMethod("Halyk Bank");
@@ -296,6 +347,8 @@ export default function BusinessStorefrontPage() {
   const isServiceMode = business.storefront_template === "services";
   const kaspiLink = normalizeUrl(business.kaspi_pay_link || "");
   const hasKaspi = Boolean(kaspiLink);
+  const hasHalykApi = Boolean(business.halyk_api_enabled);
+  const hasFreedomApi = Boolean(business.freedom_api_enabled);
   const hasHalyk = Boolean(business.halyk_enabled);
   const instagramUrl = normalizeInstagramUrl(business.instagram || "");
 
@@ -303,18 +356,34 @@ export default function BusinessStorefrontPage() {
     id: string;
     label: string;
     hint: string;
-    badge?: "kaspi" | "halyk";
+    badge?: "kaspi" | "halyk" | "freedom";
   }[] = [];
 
+  if (hasHalykApi) {
+    paymentOptions.push({
+      id: "Halyk ePay",
+      label: "Halyk ePay (Карта / Apple Pay / Google Pay)",
+      hint: "Мгновенная онлайн-оплата без отправки чека",
+      badge: "halyk",
+    });
+  }
+  if (hasFreedomApi) {
+    paymentOptions.push({
+      id: "Freedom Pay",
+      label: "Freedom Pay (Карта / Apple Pay / Google Pay)",
+      hint: "Мгновенная онлайн-оплата без отправки чека",
+      badge: "freedom",
+    });
+  }
   if (hasKaspi) {
     paymentOptions.push({
       id: "Kaspi Pay",
       label: "Kaspi Pay",
-      hint: "Переход по ссылке в приложение Kaspi.kz",
+      hint: "Оплата по ссылке Kaspi.kz + загрузка чека на сайте",
       badge: "kaspi",
     });
   }
-  if (hasHalyk) {
+  if (hasHalyk && !hasHalykApi) {
     paymentOptions.push({
       id: "Halyk Bank",
       label: "Halyk Bank",
@@ -387,6 +456,61 @@ export default function BusinessStorefrontPage() {
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
   const cartTotal = cartItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
+  const startOnlinePayment = async (
+    provider: "halyk" | "freedom",
+    orderId: string,
+    orderCode: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const endpoint =
+        provider === "halyk"
+          ? "/api/payments/halyk/init"
+          : "/api/payments/freedom/init";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, orderCode }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        return {
+          ok: false,
+          error: json.error || "Не удалось открыть окно оплаты банка.",
+        };
+      }
+
+      if (provider === "freedom" && json.redirectUrl) {
+        window.location.href = json.redirectUrl;
+        return { ok: true };
+      }
+
+      if (provider === "halyk" && json.scriptUrl && json.paymentObject) {
+        await loadExternalScript(json.scriptUrl);
+        const win = window as unknown as {
+          halyk?: { pay?: (obj: unknown) => void };
+        };
+        if (win.halyk?.pay) {
+          win.halyk.pay(json.paymentObject);
+          return { ok: true };
+        }
+        return {
+          ok: false,
+          error: "Виджет Halyk ePay не загрузился. Попробуйте обновить страницу.",
+        };
+      }
+
+      return { ok: false, error: "Некорректный ответ платёжного шлюза." };
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Ошибка соединения с платёжным шлюзом.",
+      };
+    }
+  };
+
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientName.trim() || !clientPhone.trim() || cartItems.length === 0) return;
@@ -431,6 +555,23 @@ export default function BusinessStorefrontPage() {
       });
       const json = await res.json();
       if (res.ok) {
+        if (
+          json.requiresOnlinePayment &&
+          (json.paymentProvider === "halyk" || json.paymentProvider === "freedom")
+        ) {
+          const payInit = await startOnlinePayment(
+            json.paymentProvider,
+            json.orderId || "",
+            json.orderCode || ""
+          );
+          if (!payInit.ok) {
+            setOrderError(payInit.error || "Ошибка запуска онлайн-оплаты.");
+            return;
+          }
+          setCart({});
+          setCheckoutOpen(false);
+          return;
+        }
         setCart({});
         setCheckoutOpen(false);
         setReceiptUploadedUrl("");
@@ -496,6 +637,23 @@ export default function BusinessStorefrontPage() {
       });
       const json = await res.json();
       if (res.ok) {
+        if (
+          json.requiresOnlinePayment &&
+          (json.paymentProvider === "halyk" || json.paymentProvider === "freedom")
+        ) {
+          const payInit = await startOnlinePayment(
+            json.paymentProvider,
+            json.orderId || "",
+            json.orderCode || ""
+          );
+          if (!payInit.ok) {
+            setBookingError(payInit.error || "Ошибка запуска онлайн-оплаты.");
+            return;
+          }
+          setBookingService(null);
+          setComment("");
+          return;
+        }
         const bookedTitle = bookingService.name;
         const bookedPrice = bookingService.price;
         setBookingService(null);
@@ -1157,9 +1315,14 @@ export default function BusinessStorefrontPage() {
                         Kaspi Pay
                       </span>
                     )}
-                    {hasHalyk && (
+                    {(hasHalykApi || hasHalyk) && (
                       <span className="px-2.5 py-1 rounded-lg bg-[#00805F]/10 text-[#00805F] text-xs font-semibold">
-                        Halyk Bank
+                        {hasHalykApi ? "Halyk ePay" : "Halyk Bank"}
+                      </span>
+                    )}
+                    {hasFreedomApi && (
+                      <span className="px-2.5 py-1 rounded-lg bg-[#00B140]/10 text-[#008f33] text-xs font-semibold">
+                        Freedom Pay
                       </span>
                     )}
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-medium">
@@ -1768,6 +1931,11 @@ export default function BusinessStorefrontPage() {
                                   H
                                 </span>
                               )}
+                              {opt.badge === "freedom" && (
+                                <span className="w-7 h-7 rounded-lg bg-[#00B140] text-white text-xs font-extrabold flex items-center justify-center shrink-0">
+                                  F
+                                </span>
+                              )}
                               <div className="min-w-0">
                                 <div className="text-sm font-semibold text-neutral-950">
                                   {opt.label}
@@ -1907,7 +2075,9 @@ export default function BusinessStorefrontPage() {
                   className="w-full py-3.5 rounded-xl bg-neutral-950 text-white font-semibold text-sm hover:bg-neutral-800 disabled:opacity-50 transition"
                 >
                   {submittingOrder
-                    ? "Оформляем..."
+                    ? "Переходим к оплате..."
+                    : paymentMethod === "Halyk ePay" || paymentMethod === "Freedom Pay"
+                    ? `Оплатить онлайн (${formatKZT(cartTotal)})`
                     : paymentMethod === "Kaspi Pay"
                     ? `Оформить и перейти к Kaspi (${formatKZT(cartTotal)})`
                     : `Подтвердить заказ (${formatKZT(cartTotal)})`}
@@ -2099,6 +2269,61 @@ export default function BusinessStorefrontPage() {
               type="button"
               onClick={() => setOrderResult(null)}
               className="w-full py-2.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition"
+            >
+              Вернуться на витрину
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BANK PAYMENT RETURN STATUS MODAL */}
+      {paymentReturnModal && (
+        <div
+          onClick={() => setPaymentReturnModal(null)}
+          className="fixed inset-0 bg-black/55 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-2xl text-center"
+          >
+            {paymentReturnModal.status === "success" ? (
+              <>
+                <span className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-8 h-8" />
+                </span>
+                <div className="space-y-1">
+                  <h2 className="text-xl font-bold text-neutral-950">
+                    Оплата прошла успешно!
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    {paymentReturnModal.orderCode
+                      ? `Заказ ${paymentReturnModal.orderCode} оплачен через ${paymentReturnModal.provider} и уже передан в работу компании «${business.name}».`
+                      : `Ваш заказ оплачен через ${paymentReturnModal.provider} и передан в работу.`}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="w-14 h-14 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+                  <X className="w-8 h-8" />
+                </span>
+                <div className="space-y-1">
+                  <h2 className="text-xl font-bold text-neutral-950">
+                    Оплата не завершена
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    {paymentReturnModal.orderCode
+                      ? `Платёж по заказу ${paymentReturnModal.orderCode} был отменён или отклонён банком. Вы можете попробовать снова или выбрать другой способ оплаты.`
+                      : "Платёж был отменён. Вы можете попробовать снова."}
+                  </p>
+                </div>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setPaymentReturnModal(null)}
+              className="w-full py-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-semibold transition"
             >
               Вернуться на витрину
             </button>
