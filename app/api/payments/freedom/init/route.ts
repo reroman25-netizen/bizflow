@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { decryptSecret } from "@/lib/secretCrypto";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +117,7 @@ export async function POST(req: NextRequest) {
     params.pg_sig = buildFreedomSignature(
       "init_payment.php",
       params,
-      secrets.freedom_secret_key
+      decryptSecret(secrets.freedom_secret_key)
     );
 
     const formBody = new URLSearchParams(params);

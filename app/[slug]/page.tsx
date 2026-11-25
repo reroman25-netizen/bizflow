@@ -41,6 +41,7 @@ import {
   Play,
   Percent,
   RefreshCw,
+  Flag,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
@@ -50,11 +51,13 @@ import {
   BusinessCategory,
   OrderStatus,
   PaymentStatus,
+  ClientDeliverySummary,
 } from "@/lib/types";
 import { formatKZT, formatDate, cleanPhoneForWa, cleanTelegramHandle } from "@/lib/format";
 import { BrandLogo } from "@/components/BrandLogo";
 import { PwaInstallButton } from "@/components/PwaInstallButton";
 import { CATEGORY_PRESETS, CategoryPreset } from "@/lib/categoryPresets";
+import { evaluateClientDelivery } from "@/lib/deliveryPricing";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -82,6 +85,7 @@ interface ClientOrderRecord {
   total_price: number;
   items: { name: string; price: number; quantity: number }[];
   receipt_url?: string;
+  delivery?: ClientDeliverySummary | null;
   created_at: string;
 }
 
@@ -147,6 +151,20 @@ const CLIENT_ORDER_STATUS: Record<string, { label: string; className: string }> 
   in_progress: { label: "В работе", className: "bg-amber-50 text-amber-800" },
   done: { label: "Выполнен", className: "bg-emerald-50 text-emerald-700" },
   cancelled: { label: "Отменён", className: "bg-slate-100 text-slate-500" },
+};
+
+const CLIENT_DELIVERY_STATUS: Record<string, string> = {
+  queued: "Заявка на курьера в очереди",
+  estimating: "Подбираем тариф доставки",
+  request_sent: "Отправляем заявку курьеру",
+  ready_for_approval: "Подтверждаем доставку",
+  searching_courier: "Ищем свободного курьера",
+  courier_found: "Курьер назначен и едет в магазин",
+  picked_up: "Курьер забрал заказ и едет к вам",
+  delivered: "Заказ доставлен курьером",
+  cancelled: "Доставка отменена",
+  failed: "Не удалось назначить курьера",
+  needs_attention: "Уточняем детали доставки",
 };
 
 function getLocalIsoDate(offsetDays = 0): string {
@@ -317,6 +335,14 @@ export default function BusinessStorefrontPage() {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogSelectedCat, setCatalogSelectedCat] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("Подозрение на мошенничество");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportOrderCode, setReportOrderCode] = useState("");
+  const [reportContact, setReportContact] = useState("");
+  const [submittingReport, setSubmittingReport] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+  const [reportError, setReportError] = useState("");
 
   // Fullscreen Slide Story Viewer
   const [activeSlide, setActiveSlide] = useState<BusinessSlide | null>(null);
@@ -345,6 +371,8 @@ export default function BusinessStorefrontPage() {
 
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState("");
+  const [checkoutTermsAccepted, setCheckoutTermsAccepted] = useState(false);
+  const [bookingTermsAccepted, setBookingTermsAccepted] = useState(false);
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
   const [copiedAmount, setCopiedAmount] = useState(false);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
@@ -742,6 +770,16 @@ export default function BusinessStorefrontPage() {
 
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
   const cartTotal = cartItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const deliveryEval = evaluateClientDelivery(business, cartTotal);
+  const activeDeliveryFee =
+    deliveryMethod === "Доставка курьером" && deliveryEval.enabled
+      ? deliveryEval.fee
+      : 0;
+  const checkoutGrandTotal = cartTotal + activeDeliveryFee;
+  const deliveryMinBlocked =
+    deliveryMethod === "Доставка курьером" &&
+    deliveryEval.enabled &&
+    deliveryEval.minOrderNotMet;
 
   const startOnlinePayment = async (
     provider: "halyk" | "freedom",
@@ -807,6 +845,18 @@ export default function BusinessStorefrontPage() {
       );
       return;
     }
+    if (deliveryMinBlocked && deliveryEval.minOrderAmount) {
+      setOrderError(
+        `Доставка курьером доступна при заказе от ${formatKZT(
+          deliveryEval.minOrderAmount
+        )}. Добавьте ещё на ${formatKZT(deliveryEval.amountToMinOrder)} или выберите самовывоз.`
+      );
+      return;
+    }
+    if (!checkoutTermsAccepted) {
+      setOrderError("Поставьте галочку согласия с Пользовательским соглашением и Политикой конфиденциальности.");
+      return;
+    }
     if (deliveryMethod === "Доставка курьером" && !deliveryAddress.trim()) {
       setOrderError("Пожалуйста, укажите адрес доставки.");
       return;
@@ -836,6 +886,9 @@ export default function BusinessStorefrontPage() {
           comment: fullComment,
           paymentMethod,
           deliveryMethod,
+          deliveryAddress:
+            deliveryMethod === "Доставка курьером" ? deliveryAddress.trim() : "",
+          termsAccepted: checkoutTermsAccepted,
           source: "web",
           items: cartItems.map((i) => ({ productId: i.productId, quantity: i.quantity })),
         }),
@@ -871,7 +924,7 @@ export default function BusinessStorefrontPage() {
         setOrderResult({
           orderId: json.orderId || "",
           orderCode: json.orderCode || "ORD",
-          totalPrice: Number(json.totalPrice ?? cartTotal),
+          totalPrice: Number(json.totalPrice ?? checkoutGrandTotal),
           paymentMethod,
           deliveryMethod,
         });
@@ -892,6 +945,10 @@ export default function BusinessStorefrontPage() {
       setBookingError(
         "Для оплаты через Kaspi Pay введите корректный номер Казахстана (+7 7XX XXX XX XX)."
       );
+      return;
+    }
+    if (!bookingTermsAccepted) {
+      setBookingError("Поставьте галочку согласия с Пользовательским соглашением и Политикой конфиденциальности.");
       return;
     }
     if (!bookingDate || !bookingTime.trim()) {
@@ -923,6 +980,7 @@ export default function BusinessStorefrontPage() {
           comment: fullComment,
           paymentMethod,
           deliveryMethod: "Запись на услугу",
+          termsAccepted: bookingTermsAccepted,
           source: "web",
           items: [{ productId: bookingService.id, quantity: 1 }],
         }),
@@ -1010,6 +1068,38 @@ export default function BusinessStorefrontPage() {
 
   const kaspiPhoneInvalid =
     paymentMethod === "Kaspi Pay" && !isValidKzPhone(clientPhone);
+
+  const handleSubmitReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!business) return;
+    setSubmittingReport(true);
+    setReportError("");
+    try {
+      const res = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessId: business.id,
+          reason: reportReason,
+          details: reportDetails.trim(),
+          orderCode: reportOrderCode.trim(),
+          reporterContact: reportContact.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setReportError(json.error || "Не удалось отправить обращение.");
+        return;
+      }
+      setReportSent(true);
+      setReportDetails("");
+      setReportOrderCode("");
+    } catch {
+      setReportError("Ошибка сети. Попробуйте ещё раз.");
+    } finally {
+      setSubmittingReport(false);
+    }
+  };
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1439,6 +1529,16 @@ export default function BusinessStorefrontPage() {
               </div>
             )}
 
+            {/* UPFRONT DELIVERY CONDITIONS PILL (VISIBLE WHILE BROWSING) */}
+            {!isServiceMode && deliveryEval.enabled && deliveryEval.shortBadge && (
+              <div className="px-3.5">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200/80 text-[11px] font-semibold text-neutral-800 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+                  <Truck className="w-3.5 h-3.5 shrink-0" style={{ color: brandColor }} />
+                  <span>{deliveryEval.shortBadge}</span>
+                </div>
+              </div>
+            )}
+
             {/* PRODUCTS GRID OR SERVICES LIST */}
             <main className="px-3.5">
               {selectedCategory !== "Все" && (
@@ -1774,6 +1874,40 @@ export default function BusinessStorefrontPage() {
                           {formatKZT(ord.total_price)}
                         </div>
                       </div>
+
+                      {ord.delivery && (
+                        <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-3 flex flex-wrap items-center justify-between gap-2">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-900">
+                              <Truck
+                                className="w-3.5 h-3.5 shrink-0"
+                                style={{ color: brandColor }}
+                              />
+                              <span>
+                                {CLIENT_DELIVERY_STATUS[ord.delivery.status] ||
+                                  "Доставка курьером"}
+                              </span>
+                            </div>
+                            {ord.delivery.courier_name && (
+                              <div className="text-[11px] text-slate-500">
+                                Курьер: {ord.delivery.courier_name}
+                              </div>
+                            )}
+                          </div>
+                          {ord.delivery.tracking_url && (
+                            <a
+                              href={ord.delivery.tracking_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ backgroundColor: brandColor }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold shrink-0 hover:opacity-95 transition"
+                            >
+                              <span>На карте</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                      )}
 
                       {isKaspiUnpaid && hasKaspi && (
                         <button
@@ -2154,7 +2288,9 @@ export default function BusinessStorefrontPage() {
                           Самовывоз
                         </span>
                         <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-medium">
-                          Доставка курьером
+                          {deliveryEval.enabled
+                            ? deliveryEval.summaryLine
+                            : "Доставка курьером"}
                         </span>
                       </>
                     )}
@@ -2174,18 +2310,59 @@ export default function BusinessStorefrontPage() {
                   />
                 </div>
               )}
+              {(business.legal_name || business.bin_iin) && (
+                <div className="bg-slate-50 rounded-2xl p-3.5 space-y-1 border border-slate-200/70">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Реквизиты продавца
+                  </div>
+                  {business.legal_name && (
+                    <div className="text-xs font-semibold text-neutral-900">
+                      {business.legal_name}
+                    </div>
+                  )}
+                  {business.bin_iin && (
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      ИИН/БИН: {business.bin_iin}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setReportSent(false);
+                  setReportError("");
+                  setReportOpen(true);
+                }}
+                className="w-full py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-red-50 hover:border-red-200 hover:text-red-700 text-slate-500 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+              >
+                <Flag className="w-3.5 h-3.5" />
+                <span>Пожаловаться на магазин</span>
+              </button>
             </div>
 
-            <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
-              <Link href="/" className="hover:opacity-80 transition">
-                <BrandLogo size="sm" />
-              </Link>
-              <Link
-                href="/"
-                className="text-xs font-medium text-slate-500 hover:text-neutral-900"
-              >
-                Все компании →
-              </Link>
+            <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 space-y-2 shrink-0">
+              <div className="flex items-center justify-between">
+                <Link href="/" className="hover:opacity-80 transition">
+                  <BrandLogo size="sm" />
+                </Link>
+                <Link
+                  href="/"
+                  className="text-xs font-medium text-slate-500 hover:text-neutral-900"
+                >
+                  Все компании →
+                </Link>
+              </div>
+              <div className="flex items-center gap-3 text-[10px] text-slate-400">
+                <Link href="/terms" target="_blank" className="hover:text-neutral-700 underline">
+                  Соглашение
+                </Link>
+                <Link href="/privacy" target="_blank" className="hover:text-neutral-700 underline">
+                  Конфиденциальность
+                </Link>
+              </div>
             </div>
           </div>
         </div>
@@ -2372,6 +2549,8 @@ export default function BusinessStorefrontPage() {
                     </span>
                     {isServiceMode
                       ? "Онлайн-запись на удобную дату и время"
+                      : deliveryEval.enabled
+                      ? `Самовывоз · ${deliveryEval.summaryLine}`
                       : "Самовывоз или доставка курьером"}
                   </div>
                 </div>
@@ -2639,6 +2818,27 @@ export default function BusinessStorefrontPage() {
                 />
               </div>
 
+              <label className="flex items-start gap-2.5 text-[11px] text-slate-600 leading-relaxed cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={bookingTermsAccepted}
+                  onChange={(e) => setBookingTermsAccepted(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 accent-neutral-950 shrink-0"
+                  required
+                />
+                <span>
+                  Я принимаю{" "}
+                  <Link href="/terms" target="_blank" className="underline font-semibold text-neutral-900">
+                    Пользовательское соглашение
+                  </Link>{" "}
+                  и{" "}
+                  <Link href="/privacy" target="_blank" className="underline font-semibold text-neutral-900">
+                    Политику конфиденциальности
+                  </Link>
+                  , и даю согласие на обработку и трансграничную передачу ПД (Telegram, Google AI) для подтверждения записи.
+                </span>
+              </label>
+
               {bookingError && (
                 <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
                   {bookingError}
@@ -2746,11 +2946,87 @@ export default function BusinessStorefrontPage() {
                       );
                     })}
 
-                    <div className="border-t border-slate-200 pt-2.5 flex justify-between items-center">
-                      <span className="text-sm font-medium text-slate-600">Итого</span>
-                      <span className="text-lg font-bold text-neutral-950">
-                        {formatKZT(cartTotal)}
-                      </span>
+                    {/* Free delivery progress bar */}
+                    {deliveryEval.enabled &&
+                      deliveryEval.mode === "fixed" &&
+                      deliveryEval.freeFromAmount &&
+                      deliveryEval.freeFromAmount > 0 && (
+                        <div className="pt-2 space-y-1.5">
+                          {deliveryEval.amountToFreeDelivery > 0 ? (
+                            <>
+                              <div className="flex items-center justify-between text-[11px] text-slate-600">
+                                <span>
+                                  Ещё{" "}
+                                  <strong className="text-neutral-950">
+                                    {formatKZT(deliveryEval.amountToFreeDelivery)}
+                                  </strong>{" "}
+                                  до бесплатной доставки
+                                </span>
+                                <span className="font-semibold">
+                                  {Math.min(
+                                    100,
+                                    Math.round(
+                                      (cartTotal / deliveryEval.freeFromAmount) * 100
+                                    )
+                                  )}
+                                  %
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-300"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      Math.round(
+                                        (cartTotal / deliveryEval.freeFromAmount) * 100
+                                      )
+                                    )}%`,
+                                    backgroundColor: brandColor,
+                                  }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-xl px-3 py-1.5 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Доставка курьером будет бесплатной!</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    <div className="border-t border-slate-200 pt-2.5 space-y-1">
+                      {deliveryMethod === "Доставка курьером" && deliveryEval.enabled && (
+                        <>
+                          <div className="flex justify-between items-center text-xs text-slate-500">
+                            <span>Товары</span>
+                            <span>{formatKZT(cartTotal)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs text-slate-500">
+                            <span>Доставка курьером</span>
+                            <span
+                              className={
+                                activeDeliveryFee === 0
+                                  ? "font-semibold text-emerald-700"
+                                  : "font-semibold text-neutral-900"
+                              }
+                            >
+                              {activeDeliveryFee === 0
+                                ? deliveryEval.isIncluded
+                                  ? "Включена"
+                                  : "Бесплатно"
+                                : formatKZT(activeDeliveryFee)}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      <div className="flex justify-between items-center pt-0.5">
+                        <span className="text-sm font-medium text-slate-600">Итого</span>
+                        <span className="text-lg font-bold text-neutral-950">
+                          {formatKZT(checkoutGrandTotal)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -2830,11 +3106,32 @@ export default function BusinessStorefrontPage() {
                                 : "border-slate-200 bg-white hover:border-slate-300"
                             }`}
                           >
-                            <div>
-                              <div className="text-sm font-semibold text-neutral-950">
-                                {opt.label}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-neutral-950">
+                                  {opt.label}
+                                </span>
+                                {opt.id === "Доставка курьером" && deliveryEval.enabled && (
+                                  <span
+                                    className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                                      deliveryEval.fee === 0
+                                        ? "bg-emerald-50 text-emerald-700"
+                                        : "bg-slate-100 text-neutral-900"
+                                    }`}
+                                  >
+                                    {deliveryEval.fee === 0
+                                      ? deliveryEval.isIncluded
+                                        ? "Включена"
+                                        : "Бесплатно"
+                                      : formatKZT(deliveryEval.fee)}
+                                  </span>
+                                )}
                               </div>
-                              <div className="text-[11px] text-slate-500">{opt.hint}</div>
+                              <div className="text-[11px] text-slate-500">
+                                {opt.id === "Доставка курьером" && deliveryEval.enabled
+                                  ? deliveryEval.summaryLine
+                                  : opt.hint}
+                              </div>
                             </div>
                             <span
                               className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
@@ -2855,6 +3152,16 @@ export default function BusinessStorefrontPage() {
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                       Данные для заказа
                     </div>
+
+                    {deliveryMinBlocked && deliveryEval.minOrderAmount && (
+                      <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
+                        Доставка курьером доступна при заказе от{" "}
+                        <strong>{formatKZT(deliveryEval.minOrderAmount)}</strong>. Добавьте
+                        товаров ещё на{" "}
+                        <strong>{formatKZT(deliveryEval.amountToMinOrder)}</strong> или
+                        выберите самовывоз.
+                      </div>
+                    )}
 
                     {deliveryMethod === "Доставка курьером" && (
                       <input
@@ -2907,6 +3214,27 @@ export default function BusinessStorefrontPage() {
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
                     />
 
+                    <label className="flex items-start gap-2.5 text-[11px] text-slate-600 leading-relaxed pt-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checkoutTermsAccepted}
+                        onChange={(e) => setCheckoutTermsAccepted(e.target.checked)}
+                        className="w-4 h-4 mt-0.5 rounded border-slate-300 accent-neutral-950 shrink-0"
+                        required
+                      />
+                      <span>
+                        Я принимаю{" "}
+                        <Link href="/terms" target="_blank" className="underline font-semibold text-neutral-900">
+                          Пользовательское соглашение
+                        </Link>{" "}
+                        и{" "}
+                        <Link href="/privacy" target="_blank" className="underline font-semibold text-neutral-900">
+                          Политику конфиденциальности
+                        </Link>
+                        , даю согласие на обработку и трансграничную передачу персональных данных (Telegram, Google AI) для исполнения заказа. Продавец: «{business.legal_name || business.name}».
+                      </span>
+                    </label>
+
                     {orderError && (
                       <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
                         {orderError}
@@ -2922,17 +3250,17 @@ export default function BusinessStorefrontPage() {
                 <button
                   type="submit"
                   form="checkout-form"
-                  disabled={submittingOrder || kaspiPhoneInvalid}
+                  disabled={submittingOrder || kaspiPhoneInvalid || deliveryMinBlocked}
                   style={{ backgroundColor: brandColor }}
                   className="w-full py-3.5 rounded-xl text-white font-semibold text-sm hover:opacity-95 disabled:opacity-50 transition"
                 >
                   {submittingOrder
                     ? "Переходим к оплате..."
                     : paymentMethod === "Halyk ePay" || paymentMethod === "Freedom Pay"
-                    ? `Оплатить онлайн (${formatKZT(cartTotal)})`
+                    ? `Оплатить онлайн (${formatKZT(checkoutGrandTotal)})`
                     : paymentMethod === "Kaspi Pay"
-                    ? `Оформить и перейти к Kaspi (${formatKZT(cartTotal)})`
-                    : `Подтвердить заказ (${formatKZT(cartTotal)})`}
+                    ? `Оформить и перейти к Kaspi (${formatKZT(checkoutGrandTotal)})`
+                    : `Подтвердить заказ (${formatKZT(checkoutGrandTotal)})`}
                 </button>
               </div>
             )}
@@ -3182,6 +3510,135 @@ export default function BusinessStorefrontPage() {
         </div>
       )}
 
+      {/* REPORT SHOP MODAL (ANTI-FRAUD ART. 33-1) */}
+      {reportOpen && (
+        <div
+          onClick={() => setReportOpen(false)}
+          className="fixed inset-0 bg-black/55 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
+          >
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Flag className="w-4 h-4 text-red-600" />
+                <h2 className="font-bold text-base text-neutral-950">
+                  Пожаловаться на магазин
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReportOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {reportSent ? (
+              <div className="p-6 text-center space-y-3">
+                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+                <div className="font-bold text-base text-neutral-950">
+                  Обращение отправлено
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Администрация TIYIN Space проверит витрину «{business.name}» в течение 3 рабочих дней и примет меры.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setReportOpen(false)}
+                  className="w-full py-3 rounded-xl bg-neutral-950 text-white text-xs font-semibold"
+                >
+                  Закрыть
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitReport} className="p-5 space-y-3.5">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Причина жалобы
+                  </label>
+                  <select
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    <option value="Подозрение на мошенничество">
+                      Подозрение на мошенничество
+                    </option>
+                    <option value="Запрещённый товар или услуга">
+                      Запрещённый товар или услуга
+                    </option>
+                    <option value="Оплатил заказ, товар не доставили">
+                      Оплатил заказ, товар не доставили
+                    </option>
+                    <option value="Недостоверные цены или реквизиты">
+                      Недостоверные цены или реквизиты
+                    </option>
+                    <option value="Другое нарушение">Другое нарушение</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Номер заказа (если есть)
+                  </label>
+                  <input
+                    type="text"
+                    value={reportOrderCode}
+                    onChange={(e) => setReportOrderCode(e.target.value)}
+                    placeholder="Например: ORD-4821"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Опишите ситуацию
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={reportDetails}
+                    onChange={(e) => setReportDetails(e.target.value)}
+                    placeholder="Расскажите подробнее, что произошло..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Ваш телефон или Telegram для связи
+                  </label>
+                  <input
+                    type="text"
+                    value={reportContact}
+                    onChange={(e) => setReportContact(e.target.value)}
+                    placeholder="+7 7XX XXX XX XX или @username"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
+
+                {reportError && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    {reportError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={submittingReport}
+                  className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold transition"
+                >
+                  {submittingReport ? "Отправляем..." : "Отправить жалобу"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* CHAT MODAL */}
       {chatOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -3191,7 +3648,9 @@ export default function BusinessStorefrontPage() {
                 <Bot className="w-5 h-5 shrink-0" />
                 <div className="min-w-0">
                   <div className="font-semibold text-sm truncate">{business.name}</div>
-                  <div className="text-[11px] text-emerald-400">Онлайн • TIYIN AI</div>
+                  <div className="text-[11px] text-emerald-400">
+                    ИИ-ассистент • Вы общаетесь с ИИ
+                  </div>
                 </div>
               </div>
               <button
@@ -3200,6 +3659,10 @@ export default function BusinessStorefrontPage() {
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <div className="px-4 py-2 bg-blue-50 border-b border-blue-100 text-[11px] text-blue-900 leading-snug">
+              <strong>Вы общаетесь с ИИ-ассистентом (TIYIN AI).</strong> Ответы формируются искусственным интеллектом на базе каталога магазина и носят справочный характер (Закон РК «Об искусственном интеллекте»).
             </div>
 
             {chatOrderBanner && (

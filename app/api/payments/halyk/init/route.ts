@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { decryptSecret } from "@/lib/secretCrypto";
 
 export const dynamic = "force-dynamic";
 
@@ -108,10 +109,10 @@ export async function POST(req: NextRequest) {
     form.set("grant_type", "client_credentials");
     form.set(
       "scope",
-      "webapi usermanagement email_send verification statement statistics payment"
+      "payment"
     );
     form.set("client_id", secrets.halyk_client_id);
-    form.set("client_secret", secrets.halyk_client_secret);
+    form.set("client_secret", decryptSecret(secrets.halyk_client_secret));
     form.set("invoiceID", numericInvoiceId);
     form.set("amount", String(order.total_price));
     form.set("currency", "KZT");

@@ -40,6 +40,7 @@ import {
   ChevronDown,
   ChevronUp,
   Palette,
+  Truck,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
@@ -52,6 +53,7 @@ import {
   PaymentStatus,
   StorefrontTemplate,
   TelegramOrderRecipient,
+  DeliveryRecord,
 } from "@/lib/types";
 import { formatKZT, formatDate, slugify } from "@/lib/format";
 import { KZ_CITIES } from "@/lib/cities";
@@ -68,6 +70,11 @@ import { TiyinAiCenter } from "@/components/TiyinAiCenter";
 import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
 import { TelegramAuthButton } from "@/components/TelegramAuthButton";
 import { VisualStorefrontEditor } from "@/components/VisualStorefrontEditor";
+import { YandexDeliverySettings } from "@/components/YandexDeliverySettings";
+import { canActivateFreeProTrial, hasActiveProAccess, getProPlanLabel, SAAS_BASE_MONTHLY_PRICE, SAAS_BASE_TRIAL_MONTHS, SAAS_PRO_MONTHLY_PRICE } from "@/lib/proPlan";
+import { OrderDeliveryControl } from "@/components/OrderDeliveryControl";
+import { evaluateClientDelivery } from "@/lib/deliveryPricing";
+import { CURRENT_OFFER_VERSION } from "@/lib/legalDocs";
 import {
   BRAND_COLOR_PRESETS,
   extractDominantColorFromFile,
@@ -75,7 +82,7 @@ import {
 } from "@/lib/brandColor";
 
 type MainTab = "home" | "orders" | "ai" | "catalog" | "settings";
-type SettingsSection = "menu" | "company" | "payments" | "contacts" | "clients" | "share";
+type SettingsSection = "menu" | "company" | "payments" | "delivery" | "contacts" | "clients" | "share";
 
 const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
   web: { label: "Витрина", className: "bg-slate-100 text-slate-700" },
@@ -103,6 +110,7 @@ export default function DashboardPage() {
   const [business, setBusiness] = useState<Business | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [deliveriesByOrder, setDeliveriesByOrder] = useState<Record<string, DeliveryRecord>>({});
   const [clients, setClients] = useState<ClientRecord[]>([]);
 
   const [activeTab, setActiveTab] = useState<MainTab>("home");
@@ -139,6 +147,7 @@ export default function DashboardPage() {
   const [showFreedomGuide, setShowFreedomGuide] = useState(false);
 
   const [savingPayments, setSavingPayments] = useState(false);
+  const [activatingPro, setActivatingPro] = useState(false);
   const [paymentSaveError, setPaymentSaveError] = useState("");
   const [addProductOpen, setAddProductOpen] = useState(false);
 
@@ -156,6 +165,9 @@ export default function DashboardPage() {
   const [createCity, setCreateCity] = useState("Алматы");
   const [createCategory, setCreateCategory] = useState(BUSINESS_CATEGORIES[0]);
   const [createTagline, setCreateTagline] = useState("");
+  const [createLegalName, setCreateLegalName] = useState("");
+  const [createBinIin, setCreateBinIin] = useState("");
+  const [createOfferAccepted, setCreateOfferAccepted] = useState(false);
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -196,6 +208,8 @@ export default function DashboardPage() {
         (biz as Business).storefront_template === "services" ? "services" : "shop",
       brand_color: (biz as Business).brand_color || "#111827",
       plan_tier: (biz as Business).plan_tier || "base",
+      pro_trial_used: Boolean((biz as Business).pro_trial_used),
+      pro_trial_ends_at: (biz as Business).pro_trial_ends_at || null,
       trial_ends_at: (biz as Business).trial_ends_at || null,
       paid_until: (biz as Business).paid_until || null,
       billing_note: (biz as Business).billing_note || "",
@@ -203,10 +217,28 @@ export default function DashboardPage() {
       halyk_enabled: Boolean((biz as Business).halyk_enabled),
       halyk_api_enabled: Boolean((biz as Business).halyk_api_enabled),
       freedom_api_enabled: Boolean((biz as Business).freedom_api_enabled),
+      delivery_enabled: Boolean((biz as Business).delivery_enabled),
+      delivery_api_enabled: Boolean((biz as Business).delivery_api_enabled),
+      delivery_pricing_mode:
+        (biz as Business).delivery_pricing_mode === "included" ? "included" : "fixed",
+      delivery_fixed_price: Number((biz as Business).delivery_fixed_price || 0),
+      delivery_free_from: (biz as Business).delivery_free_from ?? null,
+      delivery_min_order: (biz as Business).delivery_min_order ?? null,
+      delivery_show_included_badge: (biz as Business).delivery_show_included_badge !== false,
+      delivery_pickup_address: (biz as Business).delivery_pickup_address || "",
+      delivery_pickup_lat: (biz as Business).delivery_pickup_lat ?? null,
+      delivery_pickup_lng: (biz as Business).delivery_pickup_lng ?? null,
+      delivery_pickup_entrance: (biz as Business).delivery_pickup_entrance || "",
+      delivery_pickup_phone: (biz as Business).delivery_pickup_phone || "",
+      delivery_pickup_comment: (biz as Business).delivery_pickup_comment || "",
+      legal_name: (biz as Business).legal_name || "",
+      bin_iin: (biz as Business).bin_iin || "",
+      offer_accepted_at: (biz as Business).offer_accepted_at || null,
+      offer_version: (biz as Business).offer_version || "",
     };
     setBusiness(typedBiz);
 
-    const [prodRes, ordRes, cliRes] = await Promise.all([
+    const [prodRes, ordRes, cliRes, delivRes] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -222,11 +254,27 @@ export default function DashboardPage() {
         .select("*")
         .eq("business_id", typedBiz.id)
         .order("last_order_at", { ascending: false }),
+      supabase
+        .from("deliveries")
+        .select("*")
+        .eq("business_id", typedBiz.id)
+        .order("created_at", { ascending: false }),
     ]);
 
     setProducts((prodRes.data as Product[]) || []);
     setOrders((ordRes.data as Order[]) || []);
     setClients((cliRes.data as ClientRecord[]) || []);
+
+    const dMap: Record<string, DeliveryRecord> = {};
+    for (const d of ((delivRes.data as DeliveryRecord[]) || [])) {
+      const existing = dMap[d.order_id];
+      const isNewActive = !["cancelled", "failed"].includes(d.status);
+      const isExistingActive = existing && !["cancelled", "failed"].includes(existing.status);
+      if (!existing || (isNewActive && !isExistingActive)) {
+        dMap[d.order_id] = d;
+      }
+    }
+    setDeliveriesByOrder(dMap);
     setLoading(false);
   }, []);
 
@@ -327,6 +375,39 @@ export default function DashboardPage() {
     setTimeout(() => setSaveNotice(""), 3000);
   };
 
+  const handleActivateProTrial = async () => {
+    if (!accessToken || !business) return;
+    setActivatingPro(true);
+    setUploadError("");
+    try {
+      const res = await fetch("/api/dashboard/subscription/activate-pro-trial", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setUploadError(json.error || "Не удалось активировать пробный период PRO.");
+        return;
+      }
+      setBusiness((prev) =>
+        prev
+          ? {
+              ...prev,
+              plan_tier: "pro",
+              pro_trial_used: true,
+              pro_trial_ends_at: json.pro_trial_ends_at,
+              trial_ends_at: json.trial_ends_at,
+            }
+          : prev
+      );
+      showNotice("Тариф «Бизнес PRO» активирован бесплатно на 30 дней! API банков и Яндекс Доставка открыты.");
+    } catch {
+      setUploadError("Ошибка сети при активации Бизнес PRO.");
+    } finally {
+      setActivatingPro(false);
+    }
+  };
+
   const handleCreateBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId) return;
@@ -341,6 +422,12 @@ export default function DashboardPage() {
       return;
     }
 
+    if (!createOfferAccepted) {
+      setCreateError("Подтвердите согласие с Договором оферты и Политикой конфиденциальности.");
+      setCreating(false);
+      return;
+    }
+
     const supabase = getSupabaseClient();
     const { error } = await supabase.from("businesses").insert({
       owner_id: userId,
@@ -349,6 +436,10 @@ export default function DashboardPage() {
       city: createCity,
       category: createCategory,
       tagline: createTagline.trim(),
+      legal_name: createLegalName.trim(),
+      bin_iin: createBinIin.replace(/\D/g, "").slice(0, 12),
+      offer_accepted_at: new Date().toISOString(),
+      offer_version: CURRENT_OFFER_VERSION,
     });
 
     if (error) {
@@ -403,6 +494,8 @@ export default function DashboardPage() {
         brand_color: (business.brand_color || "#111827").trim(),
         kaspi_pay_link: (business.kaspi_pay_link || "").trim(),
         halyk_enabled: Boolean(business.halyk_enabled),
+        legal_name: (business.legal_name || "").trim(),
+        bin_iin: (business.bin_iin || "").replace(/\D/g, "").slice(0, 12),
       })
       .eq("id", business.id);
 
@@ -892,7 +985,7 @@ export default function DashboardPage() {
 
           <div className="mb-5 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-xs text-emerald-950 space-y-1">
             <div className="font-bold text-emerald-900">
-              {BASE_PLAN_TRIAL_MONTHS} месяцев бесплатно · далее {formatKZT(BASE_PLAN_MONTHLY_PRICE)}/мес · 0% с продаж
+              {SAAS_BASE_TRIAL_MONTHS} месяца бесплатно · далее {formatKZT(SAAS_BASE_MONTHLY_PRICE)}/мес (Бизнес PRO 4 990 ₸ — 1 мес. бесплатно)
             </div>
             <p className="text-[11px] text-emerald-800 leading-relaxed">
               Мы не берем процент с ваших продаж. Приложение на главный экран телефона с
@@ -985,6 +1078,58 @@ export default function DashboardPage() {
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
               />
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Юридическое название (ИП / ТОО)
+                </label>
+                <input
+                  type="text"
+                  value={createLegalName}
+                  onChange={(e) => setCreateLegalName(e.target.value)}
+                  placeholder="Напр. ИП «Ameli»"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  ИИН / БИН (12 цифр)
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={12}
+                  value={createBinIin}
+                  onChange={(e) =>
+                    setCreateBinIin(e.target.value.replace(/\D/g, "").slice(0, 12))
+                  }
+                  placeholder="123456789012"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-start gap-2.5 text-xs text-slate-600 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={createOfferAccepted}
+                onChange={(e) => setCreateOfferAccepted(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded border-slate-300 accent-neutral-950 shrink-0"
+                required
+              />
+              <span className="leading-relaxed">
+                Я принимаю условия{" "}
+                <Link href="/offer" target="_blank" className="font-semibold text-neutral-950 underline">
+                  Оферты SaaS для бизнеса (v3.0)
+                </Link>{" "}
+                и{" "}
+                <Link href="/privacy" target="_blank" className="font-semibold text-neutral-950 underline">
+                  Политики конфиденциальности
+                </Link>
+                , даю согласие на обработку и трансграничную передачу ПД (Telegram, Google AI) и подтверждаю, что не буду размещать запрещённые в РК товары.
+              </span>
+            </label>
 
             {createError && (
               <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
@@ -1657,7 +1802,12 @@ export default function DashboardPage() {
                               <div className="flex flex-wrap gap-2 text-xs text-slate-500">
                                 <span>Оплата: {ord.payment_method || "Уточнить"}</span>
                                 {ord.delivery_method && (
-                                  <span>• Получение: {ord.delivery_method}</span>
+                                  <span>
+                                    • Получение: {ord.delivery_method}
+                                    {ord.delivery_fee && ord.delivery_fee > 0
+                                      ? ` (+${formatKZT(ord.delivery_fee)})`
+                                      : ""}
+                                  </span>
                                 )}
                               </div>
                               {ord.comment && (
@@ -1729,6 +1879,19 @@ export default function DashboardPage() {
                               )}
                             </div>
                           )}
+
+                          {/* TIYIN Delivery Control (Yandex Courier on Demand) */}
+                          <OrderDeliveryControl
+                            order={ord}
+                            delivery={deliveriesByOrder[ord.id] || null}
+                            accessToken={accessToken}
+                            onDeliveryUpdated={(updated) =>
+                              setDeliveriesByOrder((prev) => ({
+                                ...prev,
+                                [ord.id]: updated,
+                              }))
+                            }
+                          />
                         </div>
                       );
                     })}
@@ -1965,9 +2128,7 @@ export default function DashboardPage() {
                         Ваш тариф
                       </div>
                       <div className="font-bold text-base text-neutral-950 mt-0.5">
-                        {business.plan_tier === "ai_autopilot"
-                          ? `TIYIN AI Автопилот (${formatKZT(AI_AUTOPILOT_MONTHLY_PRICE)}/мес)`
-                          : `Базовый кабинет (0% с продаж)`}
+                        {getProPlanLabel(business.plan_tier)}
                       </div>
                     </div>
                     <span
@@ -2011,8 +2172,7 @@ export default function DashboardPage() {
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-slate-500">
                     <span>
-                      После 6 мес: <strong>{formatKZT(BASE_PLAN_MONTHLY_PRICE)}/мес</strong>{" "}
-                      • Приложение (PWA) включено сразу
+                      Базовый: <strong>{formatKZT(SAAS_BASE_MONTHLY_PRICE)}/мес</strong> (3 мес. бесплатно) · PRO: <strong>{formatKZT(SAAS_PRO_MONTHLY_PRICE)}/мес</strong> (1 мес. бесплатно)
                     </span>
                     <button
                       type="button"
@@ -2023,6 +2183,27 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </div>
+
+                {canActivateFreeProTrial(business) && (
+                  <div className="rounded-3xl bg-neutral-950 text-white p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                        Попробуйте Бизнес PRO бесплатно (1 месяц)
+                      </div>
+                      <div className="text-xs text-white/80 leading-relaxed">
+                        Откройте авто-оплату через API банков (Halyk ePay / Freedom Pay) и вызов курьеров через ваш API Яндекс Доставки. Далее {formatKZT(SAAS_PRO_MONTHLY_PRICE)}/мес.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={activatingPro}
+                      onClick={handleActivateProTrial}
+                      className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-neutral-950 text-xs font-extrabold shrink-0 transition disabled:opacity-50"
+                    >
+                      {activatingPro ? "Включаем..." : "Включить PRO бесплатно"}
+                    </button>
+                  </div>
+                )}
 
                 <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm divide-y divide-slate-100 overflow-hidden">
                   <button
@@ -2103,6 +2284,29 @@ export default function DashboardPage() {
                     <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => setSettingsSection("delivery")}
+                    className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition text-left"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <span className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                        <Truck className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <div className="font-semibold text-sm text-neutral-950">
+                          Доставка и Яндекс Курьер (API)
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {business.delivery_enabled
+                            ? evaluateClientDelivery(business, 0).shortBadge || "Включена"
+                            : "Настроить цены доставки и API Яндекс Курьера"}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+                  </button>
+
 
 
                   <button
@@ -2170,6 +2374,21 @@ export default function DashboardPage() {
                       />
                     </div>
                   )}
+                </div>
+
+                <div className="bg-white rounded-3xl border border-slate-200/90 px-5 py-4 shadow-sm flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                  <span className="font-semibold text-neutral-800">Правовые документы (РУС / ҚАЗ)</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link href="/offer" target="_blank" className="hover:text-neutral-950 underline">
+                      Оферта
+                    </Link>
+                    <Link href="/terms" target="_blank" className="hover:text-neutral-950 underline">
+                      Соглашение
+                    </Link>
+                    <Link href="/privacy" target="_blank" className="hover:text-neutral-950 underline">
+                      Конфиденциальность
+                    </Link>
+                  </div>
                 </div>
 
                 <button
@@ -2558,6 +2777,52 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
+                  <div className="pt-3 border-t border-slate-100 space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Юридические реквизиты продавца (видны клиентам в меню «О магазине»)
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Повышает доверие покупателей и соответствует требованиям Закона РК «О защите прав потребителей».
+                      </p>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Наименование ИП / ТОО
+                        </label>
+                        <input
+                          type="text"
+                          value={business.legal_name || ""}
+                          onChange={(e) =>
+                            setBusiness({ ...business, legal_name: e.target.value })
+                          }
+                          placeholder="ИП «Иванов» или ТОО «Альфа»"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          ИИН / БИН (12 цифр)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={12}
+                          value={business.bin_iin || ""}
+                          onChange={(e) =>
+                            setBusiness({
+                              ...business,
+                              bin_iin: e.target.value.replace(/\D/g, "").slice(0, 12),
+                            })
+                          }
+                          placeholder="123456789012"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <button
                     type="submit"
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-neutral-950 text-white text-sm font-semibold hover:bg-neutral-800 transition"
@@ -2671,6 +2936,9 @@ export default function DashboardPage() {
                       Деньги поступают напрямую на ваш счёт ИП/ТОО в банке по вашему тарифу эквайринга.
                     </div>
                   </div>
+                  <div className="text-[11px] text-white/70 pt-1 border-t border-white/10 leading-relaxed">
+                    Безопасность: TIYIN не хранит данные карт покупателей и не удерживает ваши деньги. API-ключи шифруются на сервере (AES-256-GCM) — используйте ключи <strong>только для приёма платежей</strong> (без прав вывода).
+                  </div>
                 </div>
 
                 {/* 1. KASPI PAY */}
@@ -2716,6 +2984,30 @@ export default function DashboardPage() {
                     </p>
                   </div>
                 </div>
+
+                {/* PRO GATE BANNER FOR BANK APIS */}
+                {!hasActiveProAccess(business) && (
+                  <div className="rounded-3xl bg-amber-50 border border-amber-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold text-amber-950">
+                        API банков (Halyk ePay и Freedom Pay) — функция тарифа «Бизнес PRO»
+                      </div>
+                      <div className="text-[11px] text-amber-900/85">
+                        На «Базовом» тарифе (990 ₸) доступен Kaspi Pay по ссылке. Включите PRO (1 месяц бесплатно), чтобы принимать карты и Apple/Google Pay автоматически.
+                      </div>
+                    </div>
+                    {canActivateFreeProTrial(business) && (
+                      <button
+                        type="button"
+                        disabled={activatingPro}
+                        onClick={handleActivateProTrial}
+                        className="px-4 py-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-bold shrink-0 transition disabled:opacity-50"
+                      >
+                        {activatingPro ? "Включаем..." : "Включить PRO (1 мес. 0 ₸)"}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* 2. HALYK EPAY API */}
                 <div className="bg-white p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
@@ -3013,6 +3305,20 @@ export default function DashboardPage() {
                   {savingPayments ? "Сохраняем..." : "Сохранить настройки оплаты"}
                 </button>
               </form>
+            )}
+
+            {/* SUB-SECTION: YANDEX DELIVERY (BYOK) */}
+            {settingsSection === "delivery" && (
+              <YandexDeliverySettings
+                accessToken={accessToken}
+                business={business}
+                onBusinessUpdate={(patch) =>
+                  setBusiness((prev) => (prev ? { ...prev, ...patch } : prev))
+                }
+                onNotice={showNotice}
+                onActivateProTrial={handleActivateProTrial}
+                activatingPro={activatingPro}
+              />
             )}
 
             {/* SUB-SECTION: CLIENTS */}

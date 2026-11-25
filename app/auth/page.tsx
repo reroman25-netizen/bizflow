@@ -11,6 +11,7 @@ import {
   TelegramAuthResult,
 } from "@/components/TelegramAuthButton";
 import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
+import { LegalConsentCheckbox } from "@/components/LegalConsentCheckbox";
 
 function AuthForm() {
   const router = useRouter();
@@ -26,6 +27,7 @@ function AuthForm() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+  const [legalAccepted, setLegalAccepted] = useState(false);
 
   const handleTelegramSuccess = async (result: TelegramAuthResult) => {
     if (!result.token_hash) {
@@ -81,6 +83,13 @@ function AuthForm() {
       const supabase = getSupabaseClient();
 
       if (authTab === "register") {
+        if (!legalAccepted) {
+          setErrorMsg(
+            "Подтвердите согласие с условиями, Политикой конфиденциальности и обработкой персональных данных."
+          );
+          setLoading(false);
+          return;
+        }
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -228,7 +237,7 @@ function AuthForm() {
             <div className="mb-5 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-xs text-emerald-950 space-y-1.5">
               <div className="flex items-center gap-1.5 font-bold text-emerald-900">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>6 месяцев бесплатно · далее 990 ₸/мес</span>
+                <span>3 месяца бесплатно · далее 990 ₸/мес (PRO 4 990 ₸ — 1 мес. бесплатно)</span>
               </div>
               <p className="text-[11px] text-emerald-800 leading-relaxed">
                 <strong>0% комиссии с ваших продаж</strong> — мы не берем процент с заказов.
@@ -306,6 +315,16 @@ function AuthForm() {
               </div>
             </div>
 
+            {authTab === "register" && (
+              <div className="pt-1">
+                <LegalConsentCheckbox
+                  checked={legalAccepted}
+                  onChange={setLegalAccepted}
+                  mode={roleMode}
+                />
+              </div>
+            )}
+
             {errorMsg && (
               <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
                 {errorMsg}
@@ -320,7 +339,7 @@ function AuthForm() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (authTab === "register" && !legalAccepted)}
               className="w-full py-3.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white font-semibold text-sm transition"
             >
               {loading
@@ -362,6 +381,18 @@ function AuthForm() {
               </>
             )}
           </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[11px] text-slate-400">
+          <Link href="/offer" target="_blank" className="hover:text-neutral-700 underline">
+            Оферта (Бизнесу)
+          </Link>
+          <Link href="/terms" target="_blank" className="hover:text-neutral-700 underline">
+            Соглашение (Клиентам)
+          </Link>
+          <Link href="/privacy" target="_blank" className="hover:text-neutral-700 underline">
+            Конфиденциальность
+          </Link>
         </div>
       </div>
     </div>

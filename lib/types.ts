@@ -8,6 +8,21 @@ export type StorefrontTemplate = "shop" | "services";
 
 export type ProductBadge = "hit" | "new" | "in_stock" | "discount";
 
+export type DeliveryPricingMode = "fixed" | "included";
+
+export type DeliveryStatus =
+  | "queued"
+  | "estimating"
+  | "request_sent"
+  | "ready_for_approval"
+  | "searching_courier"
+  | "courier_found"
+  | "picked_up"
+  | "delivered"
+  | "cancelled"
+  | "failed"
+  | "needs_attention";
+
 export interface Profile {
   id: string;
   email: string | null;
@@ -38,7 +53,9 @@ export interface Business {
   pwa_enabled?: boolean;
   storefront_template?: StorefrontTemplate;
   brand_color?: string;
-  plan_tier?: "base" | "ai_autopilot";
+  plan_tier?: "base" | "pro" | "ai_autopilot";
+  pro_trial_used?: boolean;
+  pro_trial_ends_at?: string | null;
   trial_ends_at?: string | null;
   paid_until?: string | null;
   billing_note?: string;
@@ -46,6 +63,23 @@ export interface Business {
   halyk_enabled?: boolean;
   halyk_api_enabled?: boolean;
   freedom_api_enabled?: boolean;
+  delivery_enabled?: boolean;
+  delivery_api_enabled?: boolean;
+  delivery_pricing_mode?: DeliveryPricingMode;
+  delivery_fixed_price?: number;
+  delivery_free_from?: number | null;
+  delivery_min_order?: number | null;
+  delivery_show_included_badge?: boolean;
+  delivery_pickup_address?: string;
+  delivery_pickup_lat?: number | null;
+  delivery_pickup_lng?: number | null;
+  delivery_pickup_entrance?: string;
+  delivery_pickup_phone?: string;
+  delivery_pickup_comment?: string;
+  legal_name?: string;
+  bin_iin?: string;
+  offer_accepted_at?: string | null;
+  offer_version?: string;
   is_active: boolean;
   created_at?: string;
 }
@@ -126,6 +160,8 @@ export interface Order {
   receipt_url?: string;
   receipt_uploaded_at?: string | null;
   delivery_method?: string;
+  delivery_fee?: number;
+  delivery_address?: string;
   source?: ChannelType | string;
   created_at: string;
 }
@@ -224,4 +260,58 @@ export interface BusinessCategory {
   icon_key: string;
   sort_order: number;
   created_at?: string;
+}
+
+export interface DeliveryWallet {
+  business_id: string;
+  balance: number;
+  held_balance: number;
+  updated_at?: string;
+}
+
+export interface DeliveryWalletTransaction {
+  id: string;
+  business_id: string;
+  order_id?: string | null;
+  order_code: string;
+  delivery_id?: string | null;
+  type: "topup" | "hold" | "charge" | "refund" | "adjustment" | string;
+  amount: number;
+  balance_after: number;
+  description: string;
+  client_fee_note: string;
+  status: "pending" | "completed" | "cancelled" | string;
+  created_at: string;
+}
+
+export interface DeliveryRecord {
+  id: string;
+  order_id: string;
+  business_id: string;
+  provider: string;
+  idempotency_key: string;
+  external_claim_id: string;
+  status: DeliveryStatus;
+  provider_price: number;
+  platform_markup: number;
+  final_price: number;
+  held_amount?: number;
+  yandex_version?: number;
+  wallet_settled?: boolean;
+  pickup_address: string;
+  dropoff_address: string;
+  courier_name: string;
+  courier_phone: string;
+  tracking_url: string;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientDeliverySummary {
+  id: string;
+  status: DeliveryStatus;
+  courier_name: string;
+  courier_phone: string;
+  tracking_url: string;
 }

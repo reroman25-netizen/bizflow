@@ -142,6 +142,7 @@ export async function notifyOwnerNewOrder(params: {
   chatId?: string;
   chatIds?: string[];
   businessName: string;
+  orderId?: string;
   orderCode: string;
   source: string;
   clientName: string;
@@ -149,6 +150,7 @@ export async function notifyOwnerNewOrder(params: {
   paymentMethod?: string;
   paymentStatusLabel?: string;
   deliveryMethod?: string;
+  deliveryFee?: number;
   comment?: string;
   items: { name: string; quantity: number; price: number }[];
   totalPrice: number;
@@ -177,7 +179,13 @@ export async function notifyOwnerNewOrder(params: {
           params.paymentStatusLabel ? ` (${escapeHtml(params.paymentStatusLabel)})` : ""
         }`
       : "",
-    params.deliveryMethod ? `🚚 Получение: ${escapeHtml(params.deliveryMethod)}` : "",
+    params.deliveryMethod
+      ? `🚚 Получение: ${escapeHtml(params.deliveryMethod)}${
+          typeof params.deliveryFee === "number" && params.deliveryFee > 0
+            ? ` (+${new Intl.NumberFormat("ru-RU").format(params.deliveryFee)} ₸)`
+            : ""
+        }`
+      : "",
     params.comment ? `📍 Комментарий / адрес: ${escapeHtml(params.comment)}` : "",
     ``,
     itemsLines,
@@ -187,10 +195,25 @@ export async function notifyOwnerNewOrder(params: {
     .filter(Boolean)
     .join("\n");
 
-  const markup = buildWebAppButtonMarkup(
-    "Открыть в кабинете",
-    "/dashboard?tab=orders"
-  );
+  const inlineRows: Record<string, unknown>[][] = [];
+  if (params.orderId && params.deliveryMethod === "Доставка курьером") {
+    inlineRows.push([
+      {
+        text: "🚚 Вызвать курьера (когда заказ готов)",
+        callback_data: `deliv_quote:${params.orderId}`,
+      },
+    ]);
+  }
+  const baseUrl = getAppBaseUrl();
+  if (baseUrl.startsWith("https://")) {
+    inlineRows.push([
+      {
+        text: "Открыть в кабинете",
+        web_app: { url: `${baseUrl}/dashboard?tab=orders` },
+      },
+    ]);
+  }
+  const markup = inlineRows.length > 0 ? { inline_keyboard: inlineRows } : undefined;
 
   await Promise.allSettled(
     targets.map((cid) => sendTelegramMessage(cid, text, markup))
@@ -370,4 +393,98 @@ export async function notifySuperAdminBillingDigest(params: {
 
   const markup = buildWebAppButtonMarkup("Открыть админку", "/admin");
   return sendTelegramMessage(adminChatId, text, markup);
+}
+
+export async function notifySuperAdminDeliveryTopup(params: {
+  businessName: string;
+  businessSlug: string;
+  amount: number;
+  contactPhone?: string;
+  comment?: string;
+}) {
+  const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID || "";
+  if (!adminChatId) return false;
+
+  const text = [
+    `💳 <b>Заявка на пополнение «TIYIN Доставка»</b>`,
+    `Компания: <b>${escapeHtml(params.businessName)}</b> (/${escapeHtml(params.businessSlug)})`,
+    `Сумма: <b>${new Intl.NumberFormat("ru-RU").format(params.amount)} ₸</b>`,
+    params.contactPhone ? `📞 Контакт: ${escapeHtml(params.contactPhone)}` : "",
+    params.comment ? `💬 Комментарий: ${escapeHtml(params.comment)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return sendTelegramMessage(adminChatId, text);
+}
+
+export async function notifyDeliveryStatusUpdate(params: {
+  chatIds: string[];
+  businessName: string;
+  orderCode: string;
+  status: string;
+  courierName?: string;
+  trackingUrl?: string;
+  finalPrice?: number;
+  error?: string;
+}) {
+  if (!params.chatIds || params.chatIds.length === 0) return;
+
+  const labels: Record<string, string> = {
+    courier_found: "🚕 Курьер назначен и едет к вам",
+    picked_up: "📦 Курьер забрал заказ и едет к клиенту",
+    delivered: "✅ Заказ успешно доставлен клиенту",
+    cancelled: "⚠️ Доставка отменена",
+    failed: "❌ Ошибка вызова курьера",
+  };
+
+  const lines = [
+    `<b>${labels[params.status] || escapeHtml(params.status)}</b>`,
+    `Заказ: <b>${escapeHtml(params.orderCode)}</b> (${escapeHtml(params.businessName)})`,
+    params.courierName ? `👤 Курьер: ${escapeHtml(params.courierName)}` : "",
+    params.finalPrice && params.status === "delivered"
+      ? `🚕 Тариф Яндекс Доставки: <b>${new Intl.NumberFormat("ru-RU").format(
+          params.finalPrice
+        )} ₸</b>`
+      : "",
+    params.error ? `Причина: ${escapeHtml(params.error)}` : "",
+    params.trackingUrl
+      ? `📍 <a href="${escapeHtml(params.trackingUrl)}">Отследить курьера на карте</a>`
+      : "",
+  ].filter(Boolean);
+
+  await Promise.allSettled(
+    params.chatIds.map((cid) => sendTelegramMessage(cid, lines.join("\n")))
+  );
+}
+
+export async function notifyAdminDeliveryAlert(htmlText: string) {
+  const adminChatId = (process.env.ADMIN_TELEGRAM_CHAT_ID || "").trim();
+  if (!adminChatId) return;
+  await sendTelegramMessage(adminChatId, htmlText);
+}
+
+export async function notifyAdminShopReport(params: {
+  businessName: string;
+  businessSlug: string;
+  reason: string;
+  details: string;
+  orderCode?: string;
+  reporterContact?: string;
+}) {
+  const adminChatId = (process.env.ADMIN_TELEGRAM_CHAT_ID || "").trim();
+  if (!adminChatId) return false;
+
+  const text = [
+    `🚨 <b>Жалоба на витрину (ст. 33-1 ЗРК)</b>`,
+    `Магазин: <b>${escapeHtml(params.businessName)}</b> (/${escapeHtml(params.businessSlug)})`,
+    `Причина: <b>${escapeHtml(params.reason)}</b>`,
+    params.orderCode ? `Заказ: ${escapeHtml(params.orderCode)}` : "",
+    params.details ? `Описание: ${escapeHtml(params.details)}` : "",
+    params.reporterContact ? `Контакт заявителя: ${escapeHtml(params.reporterContact)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return sendTelegramMessage(adminChatId, text);
 }

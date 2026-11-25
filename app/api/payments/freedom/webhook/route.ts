@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { decryptSecret } from "@/lib/secretCrypto";
 import {
   notifyOwnerNewOrder,
   resolveOrderRecipientChatIds,
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
     let orderQuery = admin
       .from("orders")
       .select(
-        "id, order_code, business_id, client_name, client_phone, comment, items, total_price, source, payment_method, delivery_method, payment_status, notified_at"
+        "id, order_code, business_id, client_name, client_phone, comment, items, total_price, source, payment_method, delivery_method, delivery_fee, payment_status, notified_at"
       );
 
     if (pgOrderId) {
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
       .eq("business_id", order.business_id)
       .maybeSingle();
 
-    const secretKey = secrets?.freedom_secret_key || "";
+    const secretKey = decryptSecret(secrets?.freedom_secret_key);
     if (!secretKey) {
       return xmlResponse("error", "Merchant secret not configured");
     }
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest) {
         await notifyOwnerNewOrder({
           chatIds,
           businessName: bizRes.data?.name || "TIYIN Space",
+          orderId: order.id,
           orderCode: order.order_code,
           source: order.source || "web",
           clientName: order.client_name,
@@ -176,6 +178,7 @@ export async function POST(req: NextRequest) {
           paymentMethod: "Freedom Pay",
           paymentStatusLabel: "ОПЛАЧЕНО ✅",
           deliveryMethod: order.delivery_method || "",
+          deliveryFee: Number(order.delivery_fee || 0),
           comment: order.comment || "",
           items: Array.isArray(order.items) ? order.items : [],
           totalPrice: order.total_price,

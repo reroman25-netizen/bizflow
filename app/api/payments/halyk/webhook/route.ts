@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { decryptSecret } from "@/lib/secretCrypto";
 import {
   notifyOwnerNewOrder,
   resolveOrderRecipientChatIds,
@@ -27,7 +28,7 @@ async function verifyHalykTransaction(params: {
 
   const form = new URLSearchParams();
   form.set("grant_type", "client_credentials");
-  form.set("scope", "webapi usermanagement email_send verification statement statistics payment");
+  form.set("scope", "payment");
   form.set("client_id", params.clientId);
   form.set("client_secret", params.clientSecret);
 
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
     let orderQuery = admin
       .from("orders")
       .select(
-        "id, order_code, business_id, client_name, client_phone, comment, items, total_price, source, payment_method, delivery_method, payment_status, payment_external_id, notified_at"
+        "id, order_code, business_id, client_name, client_phone, comment, items, total_price, source, payment_method, delivery_method, delivery_fee, payment_status, payment_external_id, notified_at"
       );
 
     if (queryOrderId) {
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
     const isVerifiedPaid = targetInvoiceId
       ? await verifyHalykTransaction({
           clientId: secrets.halyk_client_id,
-          clientSecret: secrets.halyk_client_secret,
+          clientSecret: decryptSecret(secrets.halyk_client_secret),
           invoiceId: targetInvoiceId,
           testMode: Boolean(secrets.halyk_test_mode),
         })
@@ -165,6 +166,7 @@ export async function POST(req: NextRequest) {
         await notifyOwnerNewOrder({
           chatIds,
           businessName: bizRes.data?.name || "TIYIN Space",
+          orderId: order.id,
           orderCode: order.order_code,
           source: order.source || "web",
           clientName: order.client_name,
@@ -172,6 +174,7 @@ export async function POST(req: NextRequest) {
           paymentMethod: "Halyk ePay",
           paymentStatusLabel: "ОПЛАЧЕНО ✅",
           deliveryMethod: order.delivery_method || "",
+          deliveryFee: Number(order.delivery_fee || 0),
           comment: order.comment || "",
           items: Array.isArray(order.items) ? order.items : [],
           totalPrice: order.total_price,

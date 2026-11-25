@@ -20,6 +20,7 @@ import { Business, Profile } from "@/lib/types";
 import { KZ_CITIES, ALL_CITIES_LABEL } from "@/lib/cities";
 import { BrandLogo } from "@/components/BrandLogo";
 import { PhoneDemo } from "@/components/PhoneDemo";
+import { SiteFooter } from "@/components/SiteFooter";
 
 const CITY_STORAGE_KEY = "tiyin_space_city";
 
@@ -154,6 +155,12 @@ export default function HomePage() {
           </Link>
 
           <div className="flex items-center gap-2">
+            <a
+              href="#pricing"
+              className="hidden md:inline-flex items-center px-3 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-sm font-medium transition"
+            >
+              Тарифы
+            </a>
             {isAdmin && (
               <Link
                 href="/admin"
@@ -401,6 +408,8 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+
+      <SiteFooter showPricingSection={true} />
     </div>
   );
 }

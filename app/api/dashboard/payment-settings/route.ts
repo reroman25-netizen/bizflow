@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { encryptSecret } from "@/lib/secretCrypto";
+import { hasActiveProAccess } from "@/lib/proPlan";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +16,7 @@ async function getOwnedBusiness(req: NextRequest) {
 
   const { data: biz } = await admin
     .from("businesses")
-    .select("id, kaspi_pay_link, halyk_enabled, halyk_api_enabled, freedom_api_enabled")
+    .select("id, plan_tier, trial_ends_at, pro_trial_ends_at, paid_until, kaspi_pay_link, halyk_enabled, halyk_api_enabled, freedom_api_enabled")
     .eq("owner_id", userRes.user.id)
     .maybeSingle();
 
@@ -81,16 +83,26 @@ export async function PATCH(req: NextRequest) {
     const nextHalykClientId = String(body.halyk_client_id ?? existingSecrets?.halyk_client_id ?? "").trim();
     const nextHalykTerminalId = String(body.halyk_terminal_id ?? existingSecrets?.halyk_terminal_id ?? "").trim();
     const incomingHalykSecret = String(body.halyk_client_secret || "").trim();
-    const nextHalykSecret = incomingHalykSecret || existingSecrets?.halyk_client_secret || "";
+    const nextHalykSecret = incomingHalykSecret ? encryptSecret(incomingHalykSecret) : existingSecrets?.halyk_client_secret || "";
     const nextHalykTestMode = Boolean(body.halyk_test_mode ?? existingSecrets?.halyk_test_mode ?? true);
 
     const nextFreedomMerchantId = String(body.freedom_merchant_id ?? existingSecrets?.freedom_merchant_id ?? "").trim();
     const incomingFreedomSecret = String(body.freedom_secret_key || "").trim();
-    const nextFreedomSecret = incomingFreedomSecret || existingSecrets?.freedom_secret_key || "";
+    const nextFreedomSecret = incomingFreedomSecret ? encryptSecret(incomingFreedomSecret) : existingSecrets?.freedom_secret_key || "";
     const nextFreedomTestMode = Boolean(body.freedom_test_mode ?? existingSecrets?.freedom_test_mode ?? true);
 
     const wantHalykApi = Boolean(body.halyk_api_enabled);
     const wantFreedomApi = Boolean(body.freedom_api_enabled);
+
+    if ((wantHalykApi || wantFreedomApi) && !hasActiveProAccess(business)) {
+      return NextResponse.json(
+        {
+          error:
+            "API-интеграции банков (Halyk ePay и Freedom Pay) доступны на тарифе «Бизнес PRO» (4 990 ₸/мес, 1 месяц бесплатно). На «Базовом» тарифе доступен Kaspi Pay по ссылке.",
+        },
+        { status: 403 }
+      );
+    }
 
     if (wantHalykApi && (!nextHalykClientId || !nextHalykSecret || !nextHalykTerminalId)) {
       return NextResponse.json(

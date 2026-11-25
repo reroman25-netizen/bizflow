@@ -4,6 +4,7 @@ import {
   notifyOwnerNewOrder,
   resolveOrderRecipientChatIds,
 } from "@/lib/telegramNotify";
+import { evaluateClientDelivery } from "@/lib/deliveryPricing";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,8 @@ export async function POST(req: NextRequest) {
       source,
       paymentMethod,
       deliveryMethod,
+      deliveryAddress,
+      termsAccepted,
     } = body;
 
     if (
@@ -68,7 +71,7 @@ export async function POST(req: NextRequest) {
         .select("id, name, price")
         .eq("business_id", businessId)
         .in("id", productIds),
-      admin.from("businesses").select("name, halyk_api_enabled, freedom_api_enabled").eq("id", businessId).maybeSingle(),
+      admin.from("businesses").select("name, halyk_api_enabled, freedom_api_enabled, delivery_enabled, delivery_pricing_mode, delivery_fixed_price, delivery_free_from, delivery_min_order, delivery_show_included_badge").eq("id", businessId).maybeSingle(),
       admin
         .from("business_channels")
         .select("owner_telegram_chat_id, telegram_order_recipients")
@@ -101,10 +104,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Товары не найдены" }, { status: 400 });
     }
 
-    const totalPrice = verifiedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const itemsSubtotal = verifiedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const orderCode = "ORD-" + Math.floor(1000 + Math.random() * 9000);
     const orderSource = String(source || "web");
     const finalDelivery = String(deliveryMethod || "Самовывоз / Уточнить");
+    const cleanDeliveryAddress = String(deliveryAddress || "").trim();
+
+    let deliveryFee = 0;
+    if (finalDelivery === "Доставка курьером" && bizRes.data?.delivery_enabled) {
+      const evalDeliv = evaluateClientDelivery(bizRes.data, itemsSubtotal);
+      if (evalDeliv.minOrderNotMet && evalDeliv.minOrderAmount) {
+        return NextResponse.json(
+          {
+            error: `Доставка курьером доступна при заказе от ${evalDeliv.minOrderAmount} ₸.`,
+          },
+          { status: 400 }
+        );
+      }
+      deliveryFee = evalDeliv.fee;
+    }
+
+    const totalPrice = itemsSubtotal + deliveryFee;
 
     const { data: existingClient } = await admin
       .from("clients")
@@ -160,6 +180,9 @@ export async function POST(req: NextRequest) {
         payment_provider: paymentProvider,
         payment_status: "unpaid",
         delivery_method: finalDelivery,
+        delivery_fee: deliveryFee,
+        delivery_address: cleanDeliveryAddress,
+        terms_accepted_at: termsAccepted ? new Date().toISOString() : null,
       })
       .select("id")
       .single();
@@ -183,6 +206,7 @@ export async function POST(req: NextRequest) {
         await notifyOwnerNewOrder({
           chatIds: recipientChatIds,
           businessName: bizRes.data?.name || "TIYIN Space",
+          orderId: createdOrder?.id || "",
           orderCode,
           source: orderSource,
           clientName: String(clientName).trim(),
@@ -191,6 +215,7 @@ export async function POST(req: NextRequest) {
           paymentStatusLabel:
             paymentProvider === "kaspi" ? "ожидает чек" : undefined,
           deliveryMethod: finalDelivery,
+          deliveryFee,
           comment: String(comment || "").trim(),
           items: verifiedItems,
           totalPrice,
@@ -210,6 +235,7 @@ export async function POST(req: NextRequest) {
       orderId: createdOrder?.id || "",
       orderCode,
       totalPrice,
+      deliveryFee,
       requiresOnlinePayment,
       paymentProvider,
     });
