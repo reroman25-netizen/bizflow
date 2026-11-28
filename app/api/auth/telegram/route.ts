@@ -220,16 +220,45 @@ export async function POST(req: NextRequest) {
       // Проверяем, не привязан ли этот Telegram к другому аккаунту
       const { data: conflict } = await admin
         .from("profiles")
-        .select("id")
+        .select("id, email")
         .eq("telegram_id", tgUser.id)
         .neq("id", currentUserId)
         .maybeSingle();
 
       if (conflict) {
-        return NextResponse.json(
-          { error: "Этот Telegram уже привязан к другому аккаунту TIYIN Space." },
-          { status: 409 }
-        );
+        const isSyntheticTgAccount =
+          typeof conflict.email === "string" &&
+          conflict.email.startsWith("tg_") &&
+          conflict.email.endsWith("@telegram.tiyin.kz");
+
+        let canAutoMerge = false;
+        if (isSyntheticTgAccount) {
+          const { data: conflictBiz } = await admin
+            .from("businesses")
+            .select("id")
+            .eq("owner_id", conflict.id)
+            .maybeSingle();
+
+          if (!conflictBiz) {
+            canAutoMerge = true;
+          }
+        }
+
+        if (!canAutoMerge) {
+          return NextResponse.json(
+            { error: "Этот Telegram уже привязан к другому аккаунту TIYIN Space." },
+            { status: 409 }
+          );
+        }
+
+        // Освобождаем telegram_id и удаляем пустой технический дубль
+        await admin
+          .from("profiles")
+          .update({ telegram_id: null, telegram_username: null })
+          .eq("id", conflict.id);
+
+        await admin.from("profiles").delete().eq("id", conflict.id);
+        await admin.auth.admin.deleteUser(conflict.id);
       }
 
       await admin
