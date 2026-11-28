@@ -261,13 +261,20 @@ export async function POST(req: NextRequest) {
         await admin.auth.admin.deleteUser(conflict.id);
       }
 
-      await admin
+      const { error: profErr } = await admin
         .from("profiles")
         .update({
           telegram_id: tgUser.id,
           telegram_username: tgUser.username,
         })
         .eq("id", currentUserId);
+
+      if (profErr) {
+        return NextResponse.json(
+          { error: "Не удалось сохранить привязку Telegram в профиле." },
+          { status: 500 }
+        );
+      }
 
       // Если у пользователя уже есть бизнес — автоматически подставим Chat ID для уведомлений (если пусто)
       const { data: biz } = await admin
@@ -304,11 +311,53 @@ export async function POST(req: NextRequest) {
     }
 
     // MODE B: ВХОД ИЛИ РЕГИСТРАЦИЯ ЧЕРЕЗ TELEGRAM
-    const { data: existingProfile } = await admin
+    let { data: existingProfile } = await admin
       .from("profiles")
       .select("id, email, role, full_name")
       .eq("telegram_id", tgUser.id)
       .maybeSingle();
+
+    // Если в profiles ещё нет telegram_id, проверяем, не привязан ли он уже в business_channels (уведомления)
+    if (!existingProfile) {
+      const { data: chMatches } = await admin
+        .from("business_channels")
+        .select("business_id")
+        .eq("owner_telegram_chat_id", tgUser.id)
+        .limit(2);
+
+      if (chMatches && chMatches.length === 1 && chMatches[0].business_id) {
+        const { data: matchedBiz } = await admin
+          .from("businesses")
+          .select("owner_id")
+          .eq("id", chMatches[0].business_id)
+          .maybeSingle();
+
+        if (matchedBiz?.owner_id) {
+          const { data: ownerProf } = await admin
+            .from("profiles")
+            .select("id, email, role, full_name, telegram_id")
+            .eq("id", matchedBiz.owner_id)
+            .maybeSingle();
+
+          if (ownerProf && !ownerProf.telegram_id) {
+            await admin
+              .from("profiles")
+              .update({
+                telegram_id: tgUser.id,
+                telegram_username: tgUser.username,
+              })
+              .eq("id", ownerProf.id);
+
+            existingProfile = {
+              id: ownerProf.id,
+              email: ownerProf.email,
+              role: ownerProf.role,
+              full_name: ownerProf.full_name,
+            };
+          }
+        }
+      }
+    }
 
     let targetUserId = existingProfile?.id || "";
     let targetEmail = existingProfile?.email || "";

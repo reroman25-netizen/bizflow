@@ -13,6 +13,31 @@ import {
 import { TelegramMiniAppInit } from "@/components/TelegramMiniAppInit";
 import { LegalConsentCheckbox } from "@/components/LegalConsentCheckbox";
 
+async function tryAutoLinkTelegramWebApp(accessToken: string) {
+  try {
+    if (typeof window === "undefined") return;
+    const tg = (
+      window as unknown as { Telegram?: { WebApp?: { initData?: string } } }
+    ).Telegram;
+    const initData = tg?.WebApp?.initData || "";
+    if (!initData) return;
+    await fetch("/api/auth/telegram", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        mode: "webapp",
+        action: "link",
+        initData,
+      }),
+    });
+  } catch {
+    // ignore background link errors
+  }
+}
+
 function AuthForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -118,6 +143,7 @@ function AuthForm() {
           return;
         }
 
+        await tryAutoLinkTelegramWebApp(data.session.access_token);
         router.push(roleMode === "business" ? "/dashboard" : "/");
         return;
       }
@@ -135,6 +161,9 @@ function AuthForm() {
 
       const user = data.user;
       if (user) {
+        if (data.session?.access_token) {
+          await tryAutoLinkTelegramWebApp(data.session.access_token);
+        }
         const checkRes = await fetch("/api/admin/check", {
           headers: { Authorization: `Bearer ${data.session.access_token}` },
         });

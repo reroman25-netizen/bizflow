@@ -22,6 +22,7 @@ import {
   Check,
   LogOut,
   Lock,
+  Mail,
   Save,
   PanelLeftOpen,
   PanelLeftClose,
@@ -106,6 +107,11 @@ export default function DashboardPage() {
   const [accessDenied, setAccessDenied] = useState(false);
   const [linkedTelegramId, setLinkedTelegramId] = useState<string | null>(null);
   const [linkedTelegramUsername, setLinkedTelegramUsername] = useState<string>("");
+  const [userEmail, setUserEmail] = useState<string>("");
+  const [linkEmailInput, setLinkEmailInput] = useState<string>("");
+  const [linkPasswordInput, setLinkPasswordInput] = useState<string>("");
+  const [linkingEmail, setLinkingEmail] = useState<boolean>(false);
+  const [linkEmailError, setLinkEmailError] = useState<string>("");
 
   const [business, setBusiness] = useState<Business | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -318,6 +324,7 @@ export default function DashboardPage() {
 
       setUserId(user.id);
       setAccessToken(session.access_token);
+      setUserEmail(user.email || "");
       await loadBusinessData(user.id);
 
       setTgRecipientsLoading(true);
@@ -920,6 +927,45 @@ export default function DashboardPage() {
       setTgRecError("Ошибка соединения при отправке теста.");
     } finally {
       setTestingChatId(null);
+    }
+  };
+
+  const isSyntheticEmail =
+    !userEmail ||
+    (userEmail.startsWith("tg_") && userEmail.endsWith("@telegram.tiyin.kz"));
+
+  const handleLinkEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessToken) return;
+    setLinkEmailError("");
+    setLinkingEmail(true);
+    try {
+      const res = await fetch("/api/auth/link-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          email: linkEmailInput.trim(),
+          password: linkPasswordInput,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setLinkEmailError(json.error || "Не удалось привязать почту.");
+        return;
+      }
+      setUserEmail(json.email || linkEmailInput.trim().toLowerCase());
+      setLinkEmailInput("");
+      setLinkPasswordInput("");
+      showNotice(
+        "Почта и пароль подключены! Теперь вы можете входить как через Telegram, так и по почте."
+      );
+    } catch {
+      setLinkEmailError("Ошибка соединения с сервером.");
+    } finally {
+      setLinkingEmail(false);
     }
   };
 
@@ -2331,49 +2377,143 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                {/* Telegram Auth Link Card */}
-                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-semibold text-sm text-neutral-950">
-                        Вход через Telegram
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        {linkedTelegramId
-                          ? `Привязан: ${
-                              linkedTelegramUsername
-                                ? `@${linkedTelegramUsername}`
-                                : `ID ${linkedTelegramId}`
-                            } · уведомления подключены`
-                          : "Привяжите Telegram, чтобы входить в 1 клик и получать заказы автоматически"}
-                      </div>
+                {/* Unified Auth & Notifications Card (Telegram + Email) */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Способы входа и уведомления
                     </div>
-                    {linkedTelegramId && (
-                      <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold shrink-0">
-                        Привязан
-                      </span>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Один аккаунт для входа по почте и через Telegram. Привязанный Telegram автоматически получает все заказы и чеки.
+                    </p>
+                  </div>
+
+                  {/* 1. Telegram block */}
+                  <div className="rounded-2xl bg-slate-50 border border-slate-200/80 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-9 h-9 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
+                          <Send className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm text-neutral-950">
+                            Telegram (вход + уведомления)
+                          </div>
+                          <div className="text-xs text-slate-500 truncate mt-0.5">
+                            {linkedTelegramId
+                              ? `${
+                                  linkedTelegramUsername
+                                    ? `@${linkedTelegramUsername}`
+                                    : `ID ${linkedTelegramId}`
+                                } · вход в 1 клик и уведомления активны`
+                              : "Привяжите Telegram для входа в 1 клик и получения заказов"}
+                          </div>
+                        </div>
+                      </div>
+                      {linkedTelegramId && (
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold shrink-0">
+                          Подключён
+                        </span>
+                      )}
+                    </div>
+
+                    {!linkedTelegramId && (
+                      <div className="pt-1">
+                        <TelegramAuthButton
+                          action="link"
+                          accessToken={accessToken}
+                          label="Привязать Telegram к кабинету"
+                          onSuccess={async (res) => {
+                            if (res.telegram_id) {
+                              setLinkedTelegramId(res.telegram_id);
+                              setLinkedTelegramUsername(res.telegram_username || "");
+                              showNotice(
+                                "Telegram привязан! Вход в 1 клик и уведомления о заказах включены автоматически."
+                              );
+                              try {
+                                const recRes = await fetch("/api/dashboard/order-recipients", {
+                                  headers: { Authorization: `Bearer ${accessToken}` },
+                                });
+                                if (recRes.ok) {
+                                  const recJson = await recRes.json();
+                                  if (Array.isArray(recJson.recipients)) {
+                                    setTgRecipients(recJson.recipients);
+                                  }
+                                }
+                              } catch {
+                                // ignore
+                              }
+                            }
+                          }}
+                          onError={(msg) => setUploadError(msg)}
+                        />
+                      </div>
                     )}
                   </div>
 
-                  {!linkedTelegramId && (
-                    <div className="pt-1">
-                      <TelegramAuthButton
-                        action="link"
-                        accessToken={accessToken}
-                        label="Привязать Telegram к кабинету"
-                        onSuccess={(res) => {
-                          if (res.telegram_id) {
-                            setLinkedTelegramId(res.telegram_id);
-                            setLinkedTelegramUsername(res.telegram_username || "");
-                            showNotice(
-                              "Telegram привязан! Теперь можно входить в 1 клик, а заказы будут приходить в ваш Telegram."
-                            );
-                          }
-                        }}
-                        onError={(msg) => setUploadError(msg)}
-                      />
+                  {/* 2. Email + Password block */}
+                  <div className="rounded-2xl bg-slate-50 border border-slate-200/80 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-9 h-9 rounded-xl bg-neutral-200/80 text-neutral-900 flex items-center justify-center shrink-0">
+                          <Mail className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm text-neutral-950">
+                            Электронная почта (Email и пароль)
+                          </div>
+                          <div className="text-xs text-slate-500 truncate mt-0.5">
+                            {!isSyntheticEmail
+                              ? userEmail
+                              : "Добавьте почту и пароль, чтобы входить в этот же кабинет с любого браузера"}
+                          </div>
+                        </div>
+                      </div>
+                      {!isSyntheticEmail && (
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold shrink-0">
+                          Подключена
+                        </span>
+                      )}
                     </div>
-                  )}
+
+                    {isSyntheticEmail && (
+                      <form onSubmit={handleLinkEmail} className="space-y-2.5 pt-1">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <input
+                            type="email"
+                            value={linkEmailInput}
+                            onChange={(e) => setLinkEmailInput(e.target.value)}
+                            placeholder="Ваша почта (name@gmail.com)"
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                            required
+                          />
+                          <input
+                            type="password"
+                            value={linkPasswordInput}
+                            onChange={(e) => setLinkPasswordInput(e.target.value)}
+                            placeholder="Придумайте пароль (от 6 симв.)"
+                            minLength={6}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                            required
+                          />
+                        </div>
+
+                        {linkEmailError && (
+                          <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                            {linkEmailError}
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={linkingEmail}
+                          className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white text-xs font-semibold transition"
+                        >
+                          {linkingEmail ? "Сохраняем..." : "Привязать почту и пароль"}
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200/90 px-5 py-4 shadow-sm flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
