@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import {
+  consumeSixDigitLinkCode,
+  verifySignedStartParam,
+} from "@/lib/telegramLinkStore";
 
 export const dynamic = "force-dynamic";
 
@@ -157,6 +161,101 @@ function verifyWidgetData(
   };
 }
 
+async function attachTelegramToUser(
+  admin: SupabaseClient,
+  targetUserId: string,
+  tgUser: VerifiedTelegramUser
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  // Проверяем, не привязан ли этот Telegram к другому аккаунту
+  const { data: conflict } = await admin
+    .from("profiles")
+    .select("id, email")
+    .eq("telegram_id", tgUser.id)
+    .neq("id", targetUserId)
+    .maybeSingle();
+
+  if (conflict) {
+    const isSyntheticTgAccount =
+      typeof conflict.email === "string" &&
+      conflict.email.startsWith("tg_") &&
+      conflict.email.endsWith("@telegram.tiyin.kz");
+
+    let canAutoMerge = false;
+    if (isSyntheticTgAccount) {
+      const { data: conflictBiz } = await admin
+        .from("businesses")
+        .select("id")
+        .eq("owner_id", conflict.id)
+        .maybeSingle();
+
+      if (!conflictBiz) {
+        canAutoMerge = true;
+      }
+    }
+
+    if (!canAutoMerge) {
+      return {
+        ok: false,
+        status: 409,
+        error: "Этот Telegram уже привязан к другому аккаунту TIYIN Space.",
+      };
+    }
+
+    // Освобождаем telegram_id и удаляем пустой технический дубль
+    await admin
+      .from("profiles")
+      .update({ telegram_id: null, telegram_username: null })
+      .eq("id", conflict.id);
+
+    await admin.from("profiles").delete().eq("id", conflict.id);
+    await admin.auth.admin.deleteUser(conflict.id);
+  }
+
+  const { error: profErr } = await admin
+    .from("profiles")
+    .update({
+      telegram_id: tgUser.id,
+      telegram_username: tgUser.username,
+    })
+    .eq("id", targetUserId);
+
+  if (profErr) {
+    return {
+      ok: false,
+      status: 500,
+      error: "Не удалось сохранить привязку Telegram в профиле.",
+    };
+  }
+
+  // Если у пользователя уже есть бизнес — автоматически подставим Chat ID для уведомлений (если пусто)
+  const { data: biz } = await admin
+    .from("businesses")
+    .select("id")
+    .eq("owner_id", targetUserId)
+    .maybeSingle();
+
+  if (biz?.id) {
+    const { data: ch } = await admin
+      .from("business_channels")
+      .select("owner_telegram_chat_id")
+      .eq("business_id", biz.id)
+      .maybeSingle();
+
+    if (!ch?.owner_telegram_chat_id) {
+      await admin.from("business_channels").upsert(
+        {
+          business_id: biz.id,
+          owner_telegram_chat_id: tgUser.id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "business_id" }
+      );
+    }
+  }
+
+  return { ok: true };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const botToken = (
@@ -183,9 +282,15 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const mode: "webapp" | "widget" = body.mode === "webapp" ? "webapp" : "widget";
-    const action: "login" | "link" = body.action === "link" ? "link" : "login";
+    const action: "login" | "link" | "link_by_code" =
+      body.action === "link"
+        ? "link"
+        : body.action === "link_by_code"
+        ? "link_by_code"
+        : "login";
     const roleMode: "business" | "client" =
       body.roleMode === "client" ? "client" : "business";
+    const allowCreate: boolean = body.allowCreate !== false;
 
     const verified =
       mode === "webapp"
@@ -215,96 +320,84 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Сессия недействительна." }, { status: 401 });
       }
 
-      const currentUserId = userRes.user.id;
-
-      // Проверяем, не привязан ли этот Telegram к другому аккаунту
-      const { data: conflict } = await admin
-        .from("profiles")
-        .select("id, email")
-        .eq("telegram_id", tgUser.id)
-        .neq("id", currentUserId)
-        .maybeSingle();
-
-      if (conflict) {
-        const isSyntheticTgAccount =
-          typeof conflict.email === "string" &&
-          conflict.email.startsWith("tg_") &&
-          conflict.email.endsWith("@telegram.tiyin.kz");
-
-        let canAutoMerge = false;
-        if (isSyntheticTgAccount) {
-          const { data: conflictBiz } = await admin
-            .from("businesses")
-            .select("id")
-            .eq("owner_id", conflict.id)
-            .maybeSingle();
-
-          if (!conflictBiz) {
-            canAutoMerge = true;
-          }
-        }
-
-        if (!canAutoMerge) {
-          return NextResponse.json(
-            { error: "Этот Telegram уже привязан к другому аккаунту TIYIN Space." },
-            { status: 409 }
-          );
-        }
-
-        // Освобождаем telegram_id и удаляем пустой технический дубль
-        await admin
-          .from("profiles")
-          .update({ telegram_id: null, telegram_username: null })
-          .eq("id", conflict.id);
-
-        await admin.from("profiles").delete().eq("id", conflict.id);
-        await admin.auth.admin.deleteUser(conflict.id);
-      }
-
-      const { error: profErr } = await admin
-        .from("profiles")
-        .update({
-          telegram_id: tgUser.id,
-          telegram_username: tgUser.username,
-        })
-        .eq("id", currentUserId);
-
-      if (profErr) {
+      const attachRes = await attachTelegramToUser(admin, userRes.user.id, tgUser);
+      if (!attachRes.ok) {
         return NextResponse.json(
-          { error: "Не удалось сохранить привязку Telegram в профиле." },
-          { status: 500 }
+          { error: attachRes.error },
+          { status: attachRes.status }
         );
-      }
-
-      // Если у пользователя уже есть бизнес — автоматически подставим Chat ID для уведомлений (если пусто)
-      const { data: biz } = await admin
-        .from("businesses")
-        .select("id")
-        .eq("owner_id", currentUserId)
-        .maybeSingle();
-
-      if (biz?.id) {
-        const { data: ch } = await admin
-          .from("business_channels")
-          .select("owner_telegram_chat_id")
-          .eq("business_id", biz.id)
-          .maybeSingle();
-
-        if (!ch?.owner_telegram_chat_id) {
-          await admin.from("business_channels").upsert(
-            {
-              business_id: biz.id,
-              owner_telegram_chat_id: tgUser.id,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "business_id" }
-          );
-        }
       }
 
       return NextResponse.json({
         ok: true,
         linked: true,
+        telegram_id: tgUser.id,
+        telegram_username: tgUser.username,
+      });
+    }
+
+    // MODE C: ПРИВЯЗКА ПО 6-ЗНАЧНОМУ КОДУ ИЛИ DEEP LINK (startapp) + СРАЗУ ВХОД
+    if (action === "link_by_code") {
+      const rawStartParam = String(body.startParam || "").trim();
+      const rawCode = String(body.code || "").trim();
+
+      let targetUserId: string | null = null;
+      if (rawStartParam) {
+        targetUserId = verifySignedStartParam(rawStartParam);
+      } else if (rawCode) {
+        targetUserId = consumeSixDigitLinkCode(rawCode);
+      }
+
+      if (!targetUserId) {
+        return NextResponse.json(
+          {
+            error:
+              "Код или ссылка недействительны либо устарели. Получите новый код в Настройках на сайте.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const attachRes = await attachTelegramToUser(admin, targetUserId, tgUser);
+      if (!attachRes.ok) {
+        return NextResponse.json(
+          { error: attachRes.error },
+          { status: attachRes.status }
+        );
+      }
+
+      const { data: authUserData } = await admin.auth.admin.getUserById(targetUserId);
+      const { data: profData } = await admin
+        .from("profiles")
+        .select("email, role")
+        .eq("id", targetUserId)
+        .maybeSingle();
+
+      const targetEmail = authUserData?.user?.email || profData?.email || "";
+      if (!targetEmail) {
+        return NextResponse.json(
+          { error: "Не удалось найти email привязанного аккаунта." },
+          { status: 500 }
+        );
+      }
+
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type: "magiclink",
+        email: targetEmail,
+      });
+
+      if (linkErr || !linkData?.properties?.hashed_token) {
+        return NextResponse.json(
+          { error: linkErr?.message || "Не удалось создать сессию входа." },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        linked: true,
+        token_hash: linkData.properties.hashed_token,
+        role: profData?.role || "business",
         telegram_id: tgUser.id,
         telegram_username: tgUser.username,
       });
@@ -359,6 +452,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Если Telegram ещё не привязан и запрошен безопасный режим без молчаливого создания дубля
+    if (!existingProfile && !allowCreate) {
+      return NextResponse.json({
+        ok: true,
+        needs_choice: true,
+        telegram_id: tgUser.id,
+        telegram_username: tgUser.username,
+        full_name: tgUser.fullName,
+      });
+    }
+
     let targetUserId = existingProfile?.id || "";
     let targetEmail = existingProfile?.email || "";
     let targetRole: string = existingProfile?.role || roleMode;
@@ -392,7 +496,6 @@ export async function POST(req: NextRequest) {
       });
 
       if (createErr) {
-        // Если пользователь с таким syntheticEmail уже есть в auth.users — переиспользуем его
         const { data: fallbackLink, error: fallbackErr } =
           await admin.auth.admin.generateLink({
             type: "magiclink",

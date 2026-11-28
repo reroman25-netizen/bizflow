@@ -49,7 +49,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Проверяем, не занята ли почта другим профилем
     const { data: existingEmailProfile } = await admin
       .from("profiles")
       .select("id")

@@ -13,18 +13,28 @@ interface TelegramWebAppWindow {
   onTiyinTelegramAuth?: (user: Record<string, unknown>) => void;
 }
 
+export interface TelegramRawAuth {
+  mode: "webapp" | "widget";
+  initData?: string;
+  widgetData?: Record<string, unknown>;
+}
+
 export interface TelegramAuthResult {
   ok: boolean;
   token_hash?: string;
   role?: string;
   linked?: boolean;
+  needs_choice?: boolean;
   telegram_id?: string;
   telegram_username?: string;
+  full_name?: string;
+  rawAuth?: TelegramRawAuth;
 }
 
 interface TelegramAuthButtonProps {
   roleMode?: "business" | "client";
   action?: "login" | "link";
+  allowCreate?: boolean;
   accessToken?: string;
   label?: string;
   onSuccess: (result: TelegramAuthResult) => void | Promise<void>;
@@ -40,6 +50,7 @@ const DEFAULT_BOT_USERNAME = (
 export function TelegramAuthButton({
   roleMode = "business",
   action = "login",
+  allowCreate = true,
   accessToken,
   label,
   onSuccess,
@@ -52,6 +63,7 @@ export function TelegramAuthButton({
 
   const roleModeRef = useRef(roleMode);
   const actionRef = useRef(action);
+  const allowCreateRef = useRef(allowCreate);
   const accessTokenRef = useRef(accessToken);
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
@@ -59,10 +71,11 @@ export function TelegramAuthButton({
   useEffect(() => {
     roleModeRef.current = roleMode;
     actionRef.current = action;
+    allowCreateRef.current = allowCreate;
     accessTokenRef.current = accessToken;
     onSuccessRef.current = onSuccess;
     onErrorRef.current = onError;
-  }, [roleMode, action, accessToken, onSuccess, onError]);
+  }, [roleMode, action, allowCreate, accessToken, onSuccess, onError]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -95,6 +108,7 @@ export function TelegramAuthButton({
             mode: "widget",
             action: actionRef.current,
             roleMode: roleModeRef.current,
+            allowCreate: allowCreateRef.current,
             widgetData: user,
           }),
         });
@@ -103,7 +117,10 @@ export function TelegramAuthButton({
           onErrorRef.current?.(json.error || "Не удалось войти через Telegram.");
           return;
         }
-        await onSuccessRef.current(json);
+        await onSuccessRef.current({
+          ...json,
+          rawAuth: { mode: "widget", widgetData: user },
+        });
       } catch {
         onErrorRef.current?.("Ошибка соединения при входе через Telegram.");
       } finally {
@@ -150,6 +167,7 @@ export function TelegramAuthButton({
           mode: "webapp",
           action,
           roleMode,
+          allowCreate,
           initData: miniAppInitData,
         }),
       });
@@ -158,7 +176,10 @@ export function TelegramAuthButton({
         onError?.(json.error || "Не удалось войти через Telegram Mini App.");
         return;
       }
-      await onSuccess(json);
+      await onSuccess({
+        ...json,
+        rawAuth: { mode: "webapp", initData: miniAppInitData },
+      });
     } catch {
       onError?.("Ошибка соединения с сервером.");
     } finally {
